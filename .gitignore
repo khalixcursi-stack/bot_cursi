@@ -1,0 +1,11 @@
+node_modules/
+.auth/
+.env
+data/settings.json
+data/*.tmp
+data/tools/
+data/linked-bots/
+bin/yt-dlp_linux
+temp/
+*.log
+.DS_Store
