@@ -1,0 +1,22 @@
+services:
+  - type: worker
+    name: nova-md
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: BOT_NAME
+        value: ᴄᴜʀsɪ愛
+      - key: MODE
+        value: private
+      - key: PREFIX
+        value: .
+      - key: OWNER_NUMBER
+        sync: false
+      - key: AUTH_DIR
+        value: /app/persist/auth
+      - key: DATA_DIR
+        value: /app/persist/data
+    disk:
+      name: nova-data
+      mountPath: /app/persist
+      sizeGB: 1
