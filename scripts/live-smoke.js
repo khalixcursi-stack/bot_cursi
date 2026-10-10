@@ -93,7 +93,7 @@ await probe('Recherche adulte', 'nsfw', async () => {
 
 await probe('Recherche en ligne', 'videos', async () => {
   const { ctx, outputs } = textContext('Me at the zoo jawed')
-  await searchMedia.find(command => command.name === 'videos').run(ctx)
+  await downloads.find(command => command.name === 'videos').run(ctx)
   const output = outputs.find(item => item.video)
   if (!output?.video?.length) throw new Error('aucune vidéo reçue')
   if (!output.mimetype?.startsWith('video/')) throw new Error(`format vidéo inattendu : ${output.mimetype || 'inconnu'}`)

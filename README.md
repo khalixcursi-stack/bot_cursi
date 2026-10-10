@@ -149,7 +149,11 @@ L’archive HidenCloud privée contient directement dans `bin/` la version night
 .twitter <URL>
 ```
 
-Lance `.dlstatus` pour exécuter un diagnostic réel du moteur, afficher la version effectivement lancée, la plateforme, la limite, le délai et toute erreur d’exécution. Pour TikTok, le bot essaie d’abord yt-dlp puis utilise automatiquement l’API officielle du lecteur TikTok si l’extracteur est bloqué; les liens complets et courts sont reconnus. Certaines vidéos privées, protégées, payantes, géobloquées ou nécessitant une connexion peuvent rester indisponibles.
+Lance `.dlstatus` pour exécuter un diagnostic du moteur, afficher la version effectivement lancée, la plateforme, la limite, le délai et toute erreur d’exécution. La chaîne de repli est **yt-dlp → TikTok officiel → cinq instances Cobalt → Invidious (audio YouTube) → Open Graph (Instagram/Facebook/Pinterest)**. Un message yt-dlp « no video in this post » déclenche immédiatement le repli photo Open Graph; son échec laisse continuer la cascade.
+
+TikTok reconnaît les liens complets, courts et `/photo/`, essaie jusqu’à trois URL CDN distinctes, décode les URL échappées et rejette les fichiers de 1 024 octets ou moins. Les albums photo TikTok et les pickers Cobalt envoient tous leurs médias sous forme de buffers, avec une position `n/total`. Par sécurité, un album est limité à 20 médias et son total en mémoire à `MAX_DOWNLOAD_MB`.
+
+YouTube utilise d’abord les clients `ios,android,tv,web`, l’agent iOS et le référent YouTube demandés, puis change de clients en cas de blocage anti-bot. Les options yt-dlp `--geo-bypass` et `--no-check-certificates` sont activées : cette dernière désactive sa vérification TLS. Les API et les téléchargements HTTP du bot conservent leurs protections. Les contenus privés, protégés, payants, géobloqués ou nécessitant une connexion peuvent rester indisponibles.
 
 `.videos <recherche>` envoie la meilleure vidéo trouvée et propose les autres résultats dans un menu numéroté, pas seulement une URL. `.images <recherche>` interroge plusieurs sources (Openverse, Wikimedia Commons, Bing Images, Pixabay et Pexels avec clé, plus des images thématiques en appoint), note la pertinence de chaque candidat (recouvrement des mots-clés, minimum 40 %), écarte les faux positifs et envoie 3 à 5 photos téléchargées avec leur créateur, leur licence et leur lien source. Aucune commande image n’envoie un lien à la place du média. Ces commandes ne demandent pas de clé API payante.
 
@@ -167,16 +171,32 @@ NSFW_ENABLED=true
 
 Lorsqu’elle est activée, la commande est accessible aux utilisateurs autorisés par le mode général du bot, y compris dans les groupes. Le marqueur `18+` est obligatoire à chaque demande pour éviter un déclenchement accidentel. Le bot envoie une photo JPEG avec sa source et sa licence. Les requêtes impliquant des mineurs, l’absence de consentement, la zoophilie ou d’autres contenus illégaux restent bloquées. L’activation peut exposer le compte à des signalements ou restrictions selon les règles de WhatsApp et celles du groupe.
 
-### Repli Cobalt facultatif
+### Repli Cobalt sans configuration
 
-Si l’hébergeur interdit l’exécution d’un binaire ou si une plateforme change son fonctionnement, tu peux ajouter une instance [Cobalt](https://github.com/imputnet/cobalt) que tu contrôles ou que son propriétaire t’autorise explicitement à utiliser :
+Même avec `COBALT_API_URL` vide, le bot essaie les cinq instances publiques suivantes, l’une après l’autre, jusqu’au premier téléchargement complet :
+
+1. `https://api.cobalt.tools`
+2. `https://co.wuk.sh`
+3. `https://cobalt-api.kwiatekmiki.com`
+4. `https://cobalt.dreamapi.cloud`
+5. `https://api-cobalt.deno.dev`
+
+Une panne HTTP, un picker incomplet, un CDN défaillant ou une réponse « no video » ne bloque pas les autres instances. Ces services communautaires peuvent changer, imposer une authentification ou être momentanément indisponibles; leur disponibilité n’est pas garantie. L’URL du contenu demandé leur est transmise lors des replis.
+
+Tu peux ajouter en priorité une instance [Cobalt](https://github.com/imputnet/cobalt) que tu contrôles ou que son propriétaire t’autorise explicitement à utiliser :
 
 ```dotenv
 COBALT_API_URL=https://ton-instance.example
 COBALT_API_KEY=
 ```
 
-`YOUTUBE_API_KEY` ou `YOUTUBE_SEARCH_API_URL` ne sont plus obligatoires; ils servent seulement de solution de recherche supplémentaire si le moteur local est désactivé. Aucune instance publique inconnue n’est codée en dur. Télécharge uniquement les contenus que tu as le droit de conserver et respecte les conditions des plateformes.
+`COBALT_INSTANCES` ajoute des instances prioritaires sans supprimer les cinq replis publics. `COBALT_API_KEY` est envoyée uniquement à l’origine de `COBALT_API_URL`, jamais aux autres instances.
+
+`YOUTUBE_API_KEY` et `YOUTUBE_SEARCH_API_URL` sont facultatifs. Après l’échec ou une réponse vide des fournisseurs configurés et de la recherche locale, le bot utilise quatre instances Invidious publiques en cascade (`inv.nadeko.net`, `invidious.nerdvpn.de`, `yewtu.be`, `invidious.jing.rocks`). `INVIDIOUS_INSTANCES` permet d’ajouter des instances prioritaires.
+
+Les 13 commandes `.wiki/.wp`, `.fact/.catfact`, `.dog/.chien`, `.quote/.citation`, `.crypto/.btc/.eth`, `.pokemon/.pkmn`, `.country/.pays`, `.xkcd`, `.trivia/.quiz`, `.number/.chiffre`, `.nameguess/.name`, `.picsum` et `.rickmorty/.ram` utilisent des services sans clé avec des replis. `.country` envoie le drapeau PNG comme média, `.btc` et `.eth` ciblent leur monnaie, `.translate` essaie MyMemory puis Google (LibreTranslate en secours), et `.lyrics` essaie lrclib avant lyrics.ovh. Toutes les images, y compris `.getpp` et le menu de secours, sont envoyées comme buffers.
+
+Télécharge uniquement les contenus que tu as le droit de conserver et respecte les conditions des plateformes.
 
 ## Menus et sous-menus
 

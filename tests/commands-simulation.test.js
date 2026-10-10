@@ -4,6 +4,7 @@ import generalCommands from '../src/commands/general.js'
 import groupCommands from '../src/commands/group.js'
 import ownerCommands from '../src/commands/owner.js'
 import whatsappCommands from '../src/commands/whatsapp.js'
+import { mediaResponse, mockHttp } from './helpers/http-fixture.js'
 
 const target = '242060000000@s.whatsapp.net'
 
@@ -153,7 +154,8 @@ test('simulation WhatsApp : commandes générales locales', async () => {
   }
 })
 
-test('simulation WhatsApp : commandes de profil et sauvegarde', async () => {
+test('simulation WhatsApp : commandes de profil et sauvegarde', async t => {
+  mockHttp(t, () => mediaResponse('image/jpeg'))
   const cases = {
     getpp: {}, whois: {}, onwa: { text: '242060000000' }, privacy: {}, blocklist: {}, mygroups: {}, del: {},
     save: { quoted: { rawMessage: {}, message: { imageMessage: { mimetype: 'image/jpeg' } } } },
@@ -165,6 +167,7 @@ test('simulation WhatsApp : commandes de profil et sauvegarde', async () => {
     assert.ok(input !== undefined, `fixture manquante pour ${command.name}`)
     const ctx = fixture(input)
     await command.run(ctx)
+    if (command.name === 'getpp') assert.ok(Buffer.isBuffer(ctx.outputs[0].image))
     assert.ok(ctx.outputs.length || ctx.actions.length, `${command.name} n’a produit aucune action`)
   }
 })

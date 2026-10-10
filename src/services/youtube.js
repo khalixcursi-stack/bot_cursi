@@ -2,6 +2,7 @@ import { UserError } from '../core/errors.js'
 import { fetchJson } from './http.js'
 import { localYouTubeSearch } from './local-downloader.js'
 import { searchYouTubeInvidious } from './more-apis.js'
+import { decodeHtmlEntities as decodeHtml } from '../utils/html.js'
 
 const YOUTUBE_HOSTS = new Set([
   'youtube.com',
@@ -10,15 +11,6 @@ const YOUTUBE_HOSTS = new Set([
   'music.youtube.com',
   'youtu.be'
 ])
-
-function decodeHtml(text = '') {
-  return String(text)
-    .replaceAll('&amp;', '&')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-}
 
 function videoUrl(videoId = '') {
   return videoId ? `https://www.youtube.com/watch?v=${videoId}` : ''
@@ -33,7 +25,7 @@ export function isYouTubeUrl(input = '') {
   try {
     const url = new URL(input)
     const host = url.hostname.toLowerCase()
-    return url.protocol.startsWith('http') && (YOUTUBE_HOSTS.has(host) || host.endsWith('.youtube.com'))
+    return ['http:', 'https:'].includes(url.protocol) && (YOUTUBE_HOSTS.has(host) || host.endsWith('.youtube.com'))
   } catch {
     return false
   }
@@ -102,29 +94,31 @@ export async function searchYouTube(config, query) {
   if (!cleanQuery) throw new UserError('Indiquez un titre ou une recherche YouTube.')
 
   let lastError
-  try {
-    if (config.youtubeApiKey) {
-      const params = new URLSearchParams({
-        part: 'snippet',
-        type: 'video',
-        maxResults: '5',
-        safeSearch: 'moderate',
-        q: cleanQuery,
-        key: config.youtubeApiKey
-      })
-      const results = parseYouTubeApiResults(await fetchJson(`https://www.googleapis.com/youtube/v3/search?${params}`))
+  const providers = []
+  if (config.youtubeApiKey) {
+    const params = new URLSearchParams({
+      part: 'snippet', type: 'video', maxResults: '5', safeSearch: 'moderate', q: cleanQuery, key: config.youtubeApiKey
+    })
+    providers.push(async () => parseYouTubeApiResults(await fetchJson(`https://www.googleapis.com/youtube/v3/search?${params}`, {
+      timeout: 15_000, retries: 1
+    })))
+  }
+  if (config.youtubeSearchApiUrl) {
+    const provider = config.youtubeSearchProvider === 'piped' ? 'piped' : 'invidious'
+    providers.push(async () => {
+      const data = await fetchJson(searchEndpoint(config.youtubeSearchApiUrl, provider, cleanQuery), { timeout: 15_000, retries: 1 })
+      return provider === 'piped' ? parsePipedResults(data) : parseInvidiousResults(data)
+    })
+  }
+  if (config.localDownloaderEnabled) providers.push(() => localYouTubeSearch(config, cleanQuery))
+
+  for (const provider of providers) {
+    try {
+      const results = await provider()
       if (results.length) return results
-    } else if (config.youtubeSearchApiUrl) {
-      const provider = config.youtubeSearchProvider === 'piped' ? 'piped' : 'invidious'
-      const data = await fetchJson(searchEndpoint(config.youtubeSearchApiUrl, provider, cleanQuery), { timeout: 20_000 })
-      const results = provider === 'piped' ? parsePipedResults(data) : parseInvidiousResults(data)
-      if (results.length) return results
-    } else if (config.localDownloaderEnabled) {
-      const results = await localYouTubeSearch(config, cleanQuery)
-      if (results.length) return results
+    } catch (error) {
+      lastError = error
     }
-  } catch (error) {
-    lastError = error
   }
 
   // Repli automatique sur les instances Invidious publiques dès qu’un moteur

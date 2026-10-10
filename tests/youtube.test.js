@@ -6,9 +6,12 @@ import {
   parsePipedResults,
   parseYouTubeApiResults,
   resolveYouTube,
+  searchYouTube,
   youtubeSearchMode
 } from '../src/services/youtube.js'
 import { downloaderReadiness } from '../src/services/downloader.js'
+import { fakeDownloader } from './helpers/fake-downloader.js'
+import { mockHttp, jsonResponse } from './helpers/http-fixture.js'
 
 test('normalise les résultats des fournisseurs YouTube pris en charge', () => {
   const official = parseYouTubeApiResults({ items: [{ id: { videoId: 'abc123XYZ' }, snippet: { title: 'A &amp; B', channelTitle: 'Chaîne' } }] })
@@ -52,4 +55,26 @@ test('calcule la disponibilité des téléchargements sans exposer les secrets',
   assert.equal(downloaderReadiness({ localDownloaderEnabled: true }).titleYouTube, true)
   assert.equal(youtubeSearchMode({ localDownloaderEnabled: true }), 'moteur local yt-dlp + repli Invidious')
   assert.equal(youtubeSearchMode({ youtubeSearchApiUrl: 'https://inv.example', youtubeSearchProvider: 'invidious' }), 'API Invidious configurée + repli Invidious')
+})
+
+
+test('une recherche locale en erreur ou vide bascule automatiquement sur Invidious', async t => {
+  const fake = await fakeDownloader(t, `
+if (args.at(-1).includes('vide')) { console.log(JSON.stringify({ entries: [] })); process.exit(0) }
+console.error('ERROR: local search unavailable'); process.exit(1)
+`)
+  if (!fake) return
+  const calls = mockHttp(t, url => url.hostname === 'fallback.example' ? jsonResponse([
+    { type: 'video', videoId: 'abc123XYZ', title: 'A &amp; B', author: 'Auteur' }
+  ]) : jsonResponse({ error: 'API unavailable' }, 503))
+  for (const query of ['échec', 'vide']) {
+    const videos = await searchYouTube({ ...fake.config, invidiousInstances: ['https://fallback.example'] }, query)
+    assert.equal(videos[0].url, 'https://www.youtube.com/watch?v=abc123XYZ')
+    assert.equal(videos[0].title, 'A & B')
+  }
+  assert.equal(calls.length, 2)
+  const results = await searchYouTube({ ...fake.config, youtubeApiKey: 'test', invidiousInstances: ['https://fallback.example'] }, 'échec')
+  assert.equal(results.length, 1)
+  assert.equal(calls.at(-2).url.hostname, 'www.googleapis.com')
+  assert.equal(calls.at(-1).url.hostname, 'fallback.example')
 })

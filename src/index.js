@@ -250,7 +250,7 @@ async function sendFirstConnectionWelcome(sock) {
     buttons: buildMenuButtons(menuContext)
   }).catch(async error => {
     logger.warn({ err: error }, 'Menu interactif de première connexion non envoyé')
-    await sock.sendMessage(recipient, buildMenuImageContent(menuContext))
+    await sock.sendMessage(recipient, await buildMenuImageContent(menuContext))
   })
   await store.setGlobal('firstWelcomeSentFor', accountId)
   logger.info({ recipient }, 'Accueil et menu de première connexion envoyés')
