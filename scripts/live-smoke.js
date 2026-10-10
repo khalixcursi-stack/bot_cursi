@@ -5,12 +5,16 @@ import general from '../src/commands/general.js'
 import downloads from '../src/commands/download.js'
 import anime from '../src/commands/anime.js'
 import stickers from '../src/commands/stickers.js'
+import extra from '../src/commands/extra.js'
 import searchMedia from '../src/commands/search-media.js'
 import searchWeb from '../src/commands/search-web.js'
+import { fetchExternalBuffer } from '../src/services/http.js'
 import { config } from '../src/config.js'
 
 const results = []
 const logger = { warn() {}, error() {}, info() {}, debug() {} }
+// Petit MP4 public utilisé pour valider l’envoi média même quand YouTube bloque.
+const TEST_VIDEO_URL = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
 
 async function probe(section, name, run) {
   const started = Date.now()
@@ -27,7 +31,12 @@ async function probe(section, name, run) {
 function textContext(text, args = text.split(/\s+/).filter(Boolean)) {
   const outputs = []
   return {
-    ctx: { text, args, quoted: null, config, logger, async reply(value) { outputs.push({ text: String(value) }) }, async send(content) { outputs.push(content) } },
+    ctx: {
+      text, args, quoted: null, config, logger,
+      runtime: { prefix: '.' },
+      async reply(value) { outputs.push({ text: String(value) }) },
+      async send(content) { outputs.push(content) }
+    },
     outputs
   }
 }
@@ -60,20 +69,20 @@ for (const name of ['joke', 'advice']) {
 }
 
 await probe('Recherche en ligne', 'images', async () => {
-  const { ctx, outputs } = textContext('Pointe-Noire Congo')
-  ctx.runtime = { prefix: '.' }
+  const { ctx, outputs } = textContext('montagne')
   await searchMedia.find(command => command.name === 'images').run(ctx)
-  const output = outputs.find(item => item.image)
-  if (!output?.image?.length) throw new Error('aucune image reçue')
-  if (output.mimetype !== 'image/jpeg') throw new Error(`format photo inattendu : ${output.mimetype || 'inconnu'}`)
-  if (!/Source\s*:/i.test(output.caption || '')) throw new Error('source absente de la légende')
-  return `${output.image.length} octets · ${output.mimetype}`
+  const images = outputs.filter(item => item.image)
+  if (images.length < 3 || images.length > 5) throw new Error(`${images.length} images reçues (3 à 5 attendues)`)
+  for (const image of images) {
+    if (!image.mimetype?.startsWith('image/')) throw new Error(`format photo inattendu : ${image.mimetype || 'inconnu'}`)
+    if (!/Source\s*:/i.test(image.caption || '')) throw new Error('source absente de la légende')
+  }
+  return `${images.length} photos envoyées avec sources`
 })
 
 await probe('Recherche adulte', 'nsfw', async () => {
   const { ctx, outputs } = textContext('18+ artistic nude')
   ctx.config = { ...config, nsfwEnabled: true }
-  ctx.runtime = { prefix: '.' }
   await searchMedia.find(command => command.name === 'nsfw').run(ctx)
   const output = outputs.find(item => item.image)
   if (!output?.image?.length) throw new Error('aucune image adulte reçue')
@@ -84,12 +93,18 @@ await probe('Recherche adulte', 'nsfw', async () => {
 
 await probe('Recherche en ligne', 'videos', async () => {
   const { ctx, outputs } = textContext('Me at the zoo jawed')
-  ctx.runtime = { prefix: '.' }
   await searchMedia.find(command => command.name === 'videos').run(ctx)
   const output = outputs.find(item => item.video)
   if (!output?.video?.length) throw new Error('aucune vidéo reçue')
   if (!output.mimetype?.startsWith('video/')) throw new Error(`format vidéo inattendu : ${output.mimetype || 'inconnu'}`)
-  return `${output.video.length} octets · ${output.mimetype}`
+  if (!/Autres résultats/i.test(output.caption || '')) throw new Error('alternatives numérotées absentes')
+  return `${output.video.length} octets · ${output.mimetype} · alternatives proposées`
+})
+
+await probe('Téléchargement', 'vidéo de test (MP4 public)', async () => {
+  const file = await fetchExternalBuffer(TEST_VIDEO_URL, { maxBytes: 8 * 1024 * 1024, timeout: 60_000 })
+  if (!file.contentType.startsWith('video/')) throw new Error(`type inattendu : ${file.contentType}`)
+  return `repli vidéo valide · ${file.buffer.length} octets · ${file.contentType}`
 })
 
 const downloadCases = [
@@ -113,7 +128,12 @@ for (const [name, text] of downloadCases) {
     const media = output?.audio || output?.video || output?.image || output?.document
     if (name === 'gitclone' && media?.subarray(0, 2).toString() !== 'PK') throw new Error('archive ZIP invalide')
     if (media) return `${media.length} octets · ${output.mimetype || 'média'}`
-    if (output?.text) return `${output.text.length} caractères`
+    if (output?.text) {
+      if (name === 'dlstatus' && !/Téléchargements fonctionnels/i.test(output.text)) {
+        throw new Error('état fonctionnel absent du rapport')
+      }
+      return `${output.text.length} caractères`
+    }
     throw new Error('aucun média ou texte reçu')
   })
 }
@@ -121,7 +141,6 @@ for (const [name, text] of downloadCases) {
 for (const [name, text] of [['anime', 'Naruto'], ['waifu', ''], ['neko', ''], ['kitsune', ''], ['husbando', '']]) {
   await probe('Anime SFW', name, async () => {
     const { ctx, outputs } = textContext(text)
-    ctx.runtime = { prefix: '.' }
     await anime.find(command => command.name === name).run(ctx)
     const count = outputs.filter(output => output.image).length
     if (count !== 3) throw new Error(`${count}/3 images reçues`)
@@ -138,11 +157,56 @@ await probe('Recherche en ligne', 'stickers', async () => {
   return `${sticker.length} octets`
 })
 
-for (const [name, text] of [['livre', 'Dune'], ['wiki', 'Congo (fleuve)'], ['hn', 'rust language'], ['so', 'javascript promise'], ['crypto', 'bitcoin']]) {
+for (const [name, text] of [['livre', 'Dune'], ['hn', 'rust language'], ['so', 'javascript promise']]) {
   await probe('Recherche en ligne', name, async () => {
     const { ctx, outputs } = textContext(text)
-    ctx.runtime = { prefix: '.' }
     await searchWeb.find(command => command.name === name || command.aliases.includes(name)).run(ctx)
+    const output = outputs[0]?.text
+    if (!output) throw new Error('aucune réponse textuelle')
+    return `${output.length} caractères`
+  })
+}
+
+// Nouvelles commandes API : chaque commande image doit renvoyer un média.
+const extraMediaCases = [
+  ['wiki', 'Brazzaville'],
+  ['pokemon', 'pikachu'],
+  ['country', 'France'],
+  ['xkcd', 'random'],
+  ['dog', ''],
+  ['picsum', ''],
+  ['rickmorty', '']
+]
+for (const [name, text] of extraMediaCases) {
+  await probe('Commandes API', name, async () => {
+    const { ctx, outputs } = textContext(text)
+    await extra.find(command => command.name === name).run(ctx)
+    const output = outputs.find(item => item.image)
+    if (!output?.image?.length) {
+      // .wiki et .country peuvent basculer en texte si l’image distante casse,
+      // mais jamais renvoyer un simple lien : le texte doit rester un résumé.
+      const fallback = outputs[0]?.text
+      if ((name === 'wiki' || name === 'country') && fallback && fallback.length > 80) {
+        return `${fallback.length} caractères (texte, image indisponible)`
+      }
+      throw new Error('aucune image reçue')
+    }
+    return `${output.image.length} octets · ${output.mimetype || 'image'}`
+  })
+}
+
+const extraTextCases = [
+  ['crypto', ''],
+  ['fact', ''],
+  ['quote', ''],
+  ['trivia', ''],
+  ['number', '42'],
+  ['nameguess', 'Marie']
+]
+for (const [name, text] of extraTextCases) {
+  await probe('Commandes API', name, async () => {
+    const { ctx, outputs } = textContext(text)
+    await extra.find(command => command.name === name).run(ctx)
     const output = outputs[0]?.text
     if (!output) throw new Error('aucune réponse textuelle')
     return `${output.length} caractères`

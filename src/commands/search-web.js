@@ -2,8 +2,6 @@ import { UserError } from '../core/errors.js'
 import { fetchJson } from '../services/http.js'
 import { truncate } from '../utils/format.js'
 
-const NUMBER = new Intl.NumberFormat('fr-FR', { maximumSignificantDigits: 6 })
-
 const HTML_ENTITIES = {
   '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': '’', '&#x27;': '’', '&apos;': '’'
 }
@@ -30,10 +28,6 @@ function requireQuery(ctx, example) {
   return query
 }
 
-function formatPrice(value, currency) {
-  return Number.isFinite(value) ? `${NUMBER.format(value)} ${currency}` : 'indisponible'
-}
-
 export default [
   {
     name: 'livre', aliases: ['book', 'books'], category: 'Recherche', usage: '<titre ou auteur>',
@@ -49,22 +43,6 @@ export default [
         book.key ? `   🔗 https://openlibrary.org${book.key}` : ''
       ].filter(Boolean).join('\n'))
       await ctx.reply([`📚 *Livres — ${truncate(query, 120)}*`, ...lines].join('\n\n'))
-    }
-  },
-  {
-    name: 'wiki', aliases: ['wikipedia'], category: 'Recherche', usage: '<sujet>',
-    description: 'Affiche le résumé du meilleur article de Wikipédia en français.', cooldown: 4,
-    async run(ctx) {
-      const query = requireQuery(ctx, 'wiki Fleuve Congo')
-      const search = await fetchJson(`https://fr.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=1&format=json&utf8=1`)
-      const hit = search.query?.search?.[0]
-      if (!hit?.title) throw new UserError(`Aucun article Wikipédia trouvé pour « ${truncate(query, 80)} ».`)
-      const summary = await fetchJson(`https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(hit.title.replace(/ /g, '_'))}`)
-      const link = summary.content_urls?.desktop?.page || `https://fr.wikipedia.org/wiki/${encodeURIComponent(hit.title.replace(/ /g, '_'))}`
-      const header = [`📚 *${summary.title || hit.title}*`]
-      if (summary.description) header.push(`_${truncate(summary.description, 200)}_`)
-      const body = truncate(summary.extract || stripHtml(hit.snippet) || 'Résumé indisponible.', 1200)
-      await ctx.reply([header.join('\n'), body, `🔗 ${link}`].join('\n\n'))
     }
   },
   {
@@ -101,27 +79,6 @@ export default [
         `   🔗 ${question.link}`
       ].join('\n'))
       await ctx.reply([`💻 *Stack Overflow — ${truncate(query, 120)}*`, ...lines].join('\n\n'))
-    }
-  },
-  {
-    name: 'crypto', aliases: ['cours', 'cryptocours'], category: 'Finance', usage: '<crypto>',
-    description: 'Affiche le cours d’une cryptomonnaie en EUR et USD (CoinGecko).', cooldown: 5,
-    async run(ctx) {
-      const query = requireQuery(ctx, 'crypto bitcoin')
-      const search = await fetchJson(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`)
-      const coin = search.coins?.[0]
-      if (!coin?.id) throw new UserError(`Crypto introuvable pour « ${truncate(query, 80)} ».`)
-      const prices = await fetchJson(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(coin.id)}&vs_currencies=eur,usd&include_24hr_change=true`)
-      const data = prices[coin.id]
-      if (!data) throw new UserError('Cours indisponible pour cette crypto.')
-      const change = Number.isFinite(data.usd_24h_change) ? `${data.usd_24h_change >= 0 ? '+' : ''}${data.usd_24h_change.toFixed(2)} % (24 h)` : 'variation indisponible'
-      await ctx.reply([
-        `🪙 *${coin.name} (${String(coin.symbol || '').toUpperCase()})*`,
-        `💶 ${formatPrice(data.eur, 'EUR')}`,
-        `💵 ${formatPrice(data.usd, 'USD')}`,
-        `📈 ${change}`,
-        `Source : CoinGecko`
-      ].join('\n'))
     }
   }
 ]

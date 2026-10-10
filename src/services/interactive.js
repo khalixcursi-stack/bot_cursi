@@ -46,6 +46,30 @@ export function quickReplyButton(text, id) {
   }
 }
 
+async function relayInteractive(ctx, interactiveMessage) {
+  if (!ctx.sock?.waUploadToServer || !ctx.sock?.relayMessage) {
+    throw new Error('Les fonctions interactives ne sont pas disponibles sur cette connexion.')
+  }
+  const generated = generateWAMessageFromContent(ctx.from, { interactiveMessage }, {
+    userJid: ctx.sock.user?.id,
+    quoted: ctx.msg
+  })
+  const relayOptions = {
+    messageId: generated.key.id,
+    additionalNodes: interactiveNodes(ctx.isGroup)
+  }
+
+  // relayMessage n’est pas enveloppé par protectSocket : on le fait passer explicitement
+  // dans la même file anti-rafale que sendMessage.
+  await ctx.safety.send(
+    ctx.sock.relayMessage.bind(ctx.sock),
+    ctx.from,
+    generated.message,
+    relayOptions
+  )
+  return generated
+}
+
 export async function sendInteractiveImageCard(ctx, { text, footer = '', buttons = [] }) {
   if (!ctx.sock?.waUploadToServer || !ctx.sock?.relayMessage) {
     throw new Error('Les fonctions interactives ne sont pas disponibles sur cette connexion.')
@@ -65,22 +89,14 @@ export async function sendInteractiveImageCard(ctx, { text, footer = '', buttons
     footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
     nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons })
   })
-  const generated = generateWAMessageFromContent(ctx.from, { interactiveMessage }, {
-    userJid: ctx.sock.user?.id,
-    quoted: ctx.msg
-  })
-  const relayOptions = {
-    messageId: generated.key.id,
-    additionalNodes: interactiveNodes(ctx.isGroup)
-  }
+  return relayInteractive(ctx, interactiveMessage)
+}
 
-  // relayMessage n’est pas enveloppé par protectSocket : on le fait passer explicitement
-  // dans la même file anti-rafale que sendMessage.
-  await ctx.safety.send(
-    ctx.sock.relayMessage.bind(ctx.sock),
-    ctx.from,
-    generated.message,
-    relayOptions
-  )
-  return generated
+export async function sendInteractiveTextCard(ctx, { text, footer = '', buttons = [] }) {
+  const interactiveMessage = proto.Message.InteractiveMessage.create({
+    body: proto.Message.InteractiveMessage.Body.create({ text }),
+    footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
+    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons })
+  })
+  return relayInteractive(ctx, interactiveMessage)
 }

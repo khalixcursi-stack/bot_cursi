@@ -1,5 +1,19 @@
 # Journal des changements
 
+## 0.24.0 — 2026-10-10
+
+- recherche d’images fiabilisée : score de pertinence `relevanceScore` (recouvrement des mots-clés titre/tags, minimum 40 %), faux positifs écartés, résultats triés et candidats multi-sources (Openverse, Wikimedia Commons, Bing Images, Pixabay et Pexels avec clé, Unsplash/LoremFlickr en appoint);
+- `.images` envoie désormais 3 à 5 photos téléchargées avec leur source, jamais un lien; `.videos` envoie la meilleure vidéo et propose les autres résultats dans un menu numéroté;
+- chaîne de téléchargement réparée : yt-dlp local (rotation d’agent utilisateur, `youtube:player_client`, nouvelle tentative automatique sur blocage anti-bot) → TikTok officiel → instances Cobalt publiques multiples → repli audio Invidious; délais portés à 120 s pour la récupération des médias;
+- `.dlstatus` sonde toutes les instances Cobalt et affiche clairement si les téléchargements sont fonctionnels;
+- nouveau module `more-apis.js` sans clé : traduction multi-fallback (MyMemory → Google → LibreTranslate), paroles lrclib.net puis lyrics.ovh, Wikipédia 10 langues, CoinGecko, PokéAPI (nom français + artwork), REST Countries, Agify/Genderize/Nationalize, faits chats, chiens, citations, XKCD, quiz, Numbers API, Picsum, Rick & Morty et recherche YouTube Invidious;
+- 13 nouvelles commandes : `.wiki` (avec image), `.fact`, `.dog`, `.quote`, `.crypto` multi-monnaies, `.pokemon`, `.country`, `.xkcd`, `.trivia` à réponses numérotées cliquables, `.number`, `.nameguess`, `.picsum`, `.rickmorty`;
+- toutes les commandes image envoient le média directement (jamais un lien texte); `.translate` et `.lyrics` utilisent les nouveaux fournisseurs en cascade; `.define` bascule sur le Wiktionnaire français en secours; URL météo Open-Meteo construite sans corruption d’entité HTML;
+- `.youtube` recherche locale → repli automatique Invidious quand la recherche échoue ou renvoie une liste vide;
+- variables facultatives : `COBALT_INSTANCES`, `INVIDIOUS_INSTANCES`, `IMAGE_PROVIDERS`, `PIXABAY_API_KEY`, `PEXELS_API_KEY`;
+- tests automatisés étendus (pertinence, multi-sources, envoi de médias, API) et script en direct enrichi avec un MP4 de test;
+- 126 commandes disponibles.
+
 ## 0.23.0 — 2026-10-10
 
 - nouvelles commandes de recherche inspirées de free-apis et public-apis, sans clé API:

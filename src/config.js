@@ -12,6 +12,11 @@ function integer(value, fallback, min, max) {
   return Math.min(max, Math.max(min, parsed))
 }
 
+function list(value, fallback = '') {
+  const raw = String(value ?? fallback ?? '')
+  return raw.split(',').map(item => item.trim()).filter(Boolean)
+}
+
 export function cleanNumber(value = '') {
   return String(value).replace(/\D/g, '')
 }
@@ -27,7 +32,7 @@ const dataDir = path.resolve(root, process.env.DATA_DIR?.trim() || 'data')
 
 export const config = Object.freeze({
   botName: process.env.BOT_NAME?.trim() || 'ᴄᴜʀsɪㅤ愛',
-  botVersion: '0.23.0',
+  botVersion: '0.24.0',
   ownerName: process.env.OWNER_NAME?.trim() || 'ᴄᴜʀsɪㅤ愛',
   ownerNumber,
   pairingNumber,
@@ -90,6 +95,11 @@ export const config = Object.freeze({
   },
   cobaltApiUrl: (process.env.COBALT_API_URL || '').replace(/\/$/, ''),
   cobaltApiKey: process.env.COBALT_API_KEY || '',
+  cobaltInstances: list(process.env.COBALT_INSTANCES),
+  invidiousInstances: list(process.env.INVIDIOUS_INSTANCES),
+  imageProviders: list(process.env.IMAGE_PROVIDERS, 'openverse,commons,bing,pixabay,pexels,unsplash,loremflickr'),
+  pixabayApiKey: process.env.PIXABAY_API_KEY || '',
+  pexelsApiKey: process.env.PEXELS_API_KEY || '',
   youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
   youtubeSearchApiUrl: (process.env.YOUTUBE_SEARCH_API_URL || '').replace(/\/$/, ''),
   youtubeSearchProvider: ['invidious', 'piped'].includes(String(process.env.YOUTUBE_SEARCH_PROVIDER || '').toLowerCase())

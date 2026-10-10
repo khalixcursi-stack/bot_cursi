@@ -1,4 +1,6 @@
+import { UserError } from '../core/errors.js'
 import { fetchJson } from '../services/http.js'
+import { fetchLyrics, translateText } from '../services/more-apis.js'
 import { extractText } from '../core/message.js'
 import { truncate } from '../utils/format.js'
 
@@ -18,7 +20,14 @@ export default [
       const geo = await fetchJson(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(ctx.text)}&count=1&language=fr&format=json`)
       const place = geo.results?.[0]
       if (!place) throw new Error('Ville introuvable')
-      const forecast = await fetchJson(`https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&timezone=auto`)
+      // Construction par URLSearchParams : garantit `&current=` (et non `¤t=`)
+      // quoi qu’il arrive aux entités HTML dans l’URL.
+      const forecastUrl = new URL('https://api.open-meteo.com/v1/forecast')
+      forecastUrl.searchParams.set('latitude', place.latitude)
+      forecastUrl.searchParams.set('longitude', place.longitude)
+      forecastUrl.searchParams.set('current', 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m')
+      forecastUrl.searchParams.set('timezone', 'auto')
+      const forecast = await fetchJson(forecastUrl.toString())
       const current = forecast.current
       await ctx.reply([
         `🌦️ *Météo — ${place.name}, ${place.country || ''}*`,
@@ -31,16 +40,15 @@ export default [
   },
   {
     name: 'translate', aliases: ['trt', 'trad'], category: 'Outils', usage: '<langue> <texte>',
-    description: 'Traduit un texte ou le message cité.', cooldown: 3,
+    description: 'Traduit un texte ou le message cité (plusieurs services en repli).', cooldown: 3,
     async run(ctx) {
       const [target = 'fr', ...rest] = ctx.args
       const quotedText = ctx.quoted ? extractText(ctx.quoted.message) : ''
       const text = rest.join(' ') || quotedText
       if (!text) throw new Error('Exemple : .translate en Bonjour le monde')
-      const data = await fetchJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(target)}&dt=t&q=${encodeURIComponent(text)}`)
-      const translated = Array.isArray(data?.[0]) ? data[0].map(part => part?.[0] || '').join('') : ''
+      const { text: translated, provider } = await translateText(text, target)
       if (!translated) throw new Error('Traduction indisponible')
-      await ctx.reply(`🌍 *Traduction (${target})*\n${translated}`)
+      await ctx.reply(`🌍 *Traduction (${target})*\n${translated}\n\n_Service : ${provider}_`)
     }
   },
   {
@@ -77,24 +85,43 @@ export default [
   },
   {
     name: 'lyrics', aliases: ['paroles'], category: 'Recherche', usage: '<artiste> | <titre>',
-    description: 'Recherche les paroles d’une chanson.', cooldown: 5,
+    description: 'Recherche les paroles d’une chanson (lrclib.net puis lyrics.ovh).', cooldown: 5,
     async run(ctx) {
       const [artist, title] = ctx.text.split('|').map(value => value.trim())
       if (!artist || !title) throw new Error('Format : artiste | titre')
-      const data = await fetchJson(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`)
-      await ctx.reply(`🎵 *${artist} — ${title}*\n\n${truncate(data.lyrics || 'Paroles introuvables', 3900)}`)
+      const { lyrics, provider } = await fetchLyrics(artist, title)
+      await ctx.reply(`🎵 *${artist} — ${title}*\n\n${truncate(lyrics || 'Paroles introuvables', 3800)}\n\n_Service : ${provider}_`)
     }
   },
   {
-    name: 'define', aliases: ['definition'], category: 'Recherche', usage: '<mot anglais>',
-    description: 'Cherche la définition anglaise d’un mot.', cooldown: 3,
+    name: 'define', aliases: ['definition'], category: 'Recherche', usage: '<mot>',
+    description: 'Cherche la définition d’un mot (dictionnaire anglais, puis Wiktionnaire français).', cooldown: 3,
     async run(ctx) {
-      if (!ctx.text) throw new Error('Indiquez un mot')
-      const data = await fetchJson(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(ctx.text.trim())}`)
+      const word = ctx.text.trim()
+      if (!word) throw new Error('Indiquez un mot')
+      let data = null
+      try {
+        data = await fetchJson(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`)
+      } catch {
+        // Repli Wiktionnaire français ci-dessous.
+      }
       const entry = data?.[0]
       const meanings = entry?.meanings?.slice(0, 3).map(item => `• *${item.partOfSpeech}* : ${item.definitions?.[0]?.definition}`).join('\n')
-      if (!meanings) throw new Error('Définition introuvable')
-      await ctx.reply(`📖 *${entry.word}*\n${meanings}`)
+      if (meanings) {
+        await ctx.reply(`📖 *${entry.word}*\n${meanings}`)
+        return
+      }
+      try {
+        const summary = await fetchJson(`https://fr.wiktionary.org/api/rest_v1/page/summary/${encodeURIComponent(word)}`)
+        const extract = truncate(summary?.extract || '', 1200)
+        if (extract) {
+          await ctx.reply(`📖 *${summary.title || word}* — Wiktionnaire FR\n${extract}`)
+          return
+        }
+      } catch {
+        // Aucun dictionnaire disponible : message d’erreur utilisateur ci-dessous.
+      }
+      throw new UserError(`Définition introuvable pour « ${truncate(word, 60)} ».`)
     }
   },
   {

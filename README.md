@@ -6,15 +6,16 @@ Bot WhatsApp multi-appareils écrit en **Node.js 20+** avec **Baileys**. Le proj
 
 ## Fonctionnalités
 
-La version actuelle charge **115 commandes** réparties en modules :
+La version actuelle charge **126 commandes** réparties en modules :
 
 - **Général** : menu, aide, ping, état, uptime, informations, propriétaire, sondages;
 - **Groupes** : `.automod`, anti-lien facultatif, bannissement persistant `.ban`, `.unban` et `.banlist`, retrait collectif confirmé `.kickall`, bienvenue/départ, ouverture/fermeture, lien, révocation, mentions, promotion, exclusion, demandes d’adhésion et messages éphémères;
 - **Médias** : MP3, découpage et photos de profil;
 - **Stickers** : conversion image/vidéo, sticker vers image et recherche `.stickers <nom>`;
 - **Anime** : `.anime <titre>` cherche trois affiches correspondantes; `.waifu`, `.neko`, `.kitsune` et `.husbando` cherchent trois images SFW sur Internet;
-- **Recherche** : météo, traduction, GitHub, npm, paroles, définition, Bible, devises, livres Open Library (`.livre`), Wikipédia FR (`.wiki`), Hacker News (`.hn`), Stack Overflow (`.stackoverflow`), cours crypto (`.crypto`), YouTube, `.videos <recherche>`, `.images <recherche>` SFW et commande adulte séparée `.nsfw 18+ <recherche>` lorsqu’elle est activée;
-- **Téléchargements** : `.play <titre>`, YouTube et réseaux sociaux avec un moteur local yt-dlp sans clé, Cobalt facultatif en repli, diagnostic `.dlstatus`, dépôt GitHub et URL directe protégée;
+- **Recherche** : météo, traduction multi-fallback, GitHub, npm, paroles (lrclib.net), définition FR/EN, Bible, devises, livres Open Library (`.livre`), Wikipédia 10 langues avec image (`.wiki`), Hacker News (`.hn`), Stack Overflow (`.stackoverflow`), cours crypto multi-monnaies (`.crypto`), fiches `.pokemon` et `.country`, YouTube, `.videos <recherche>`, `.images <recherche>` SFW et commande adulte séparée `.nsfw 18+ <recherche>` lorsqu’elle est activée;
+- **Fun** : faits sur les chats (`.fact`), photos de chiens (`.dog`), citations (`.quote`), comics `.xkcd`, quiz `.trivia` à réponses cliquables, faits numériques (`.number`), devinettes de prénoms (`.nameguess`) et photos aléatoires (`.picsum`);
+- **Téléchargements** : `.play <titre>`, YouTube et réseaux sociaux avec un moteur local yt-dlp sans clé, replis automatiques Cobalt (instances publiques) puis Invidious, diagnostic complet `.dlstatus`, dépôt GitHub et URL directe protégée;
 - **IA** : texte, vision et génération d’image via une API compatible OpenAI facultative;
 - **WhatsApp** : profil, bio, confidentialité, blocage, suppression, `.save` et filtre automatique `.delword` par groupe;
 - **Propriétaire** : mode privé/public, préfixe, sudo, bot de contrôle WhatsApp avec `.pair`, deux sessions secondaires isolées, automatisations et redémarrage contrôlé.
@@ -87,9 +88,14 @@ En local, les identifiants de session restent dans `.auth/`, qui est ignoré par
 | `MAX_LINKED_BOTS` | `2` | Nombre maximal de sessions WhatsApp secondaires (0–3) |
 | `COBALT_API_URL` | vide | Repli Cobalt auto-hébergé/autorisé |
 | `COBALT_API_KEY` | vide | Clé facultative de cette instance Cobalt |
+| `COBALT_INSTANCES` | liste interne | Instances Cobalt publiques essayées en repli |
 | `YOUTUBE_API_KEY` | vide | Recherche officielle YouTube par titre |
 | `YOUTUBE_SEARCH_API_URL` | vide | Repli Invidious/Piped contrôlé par l’opérateur |
 | `YOUTUBE_SEARCH_PROVIDER` | `invidious` | `invidious` ou `piped` |
+| `INVIDIOUS_INSTANCES` | liste interne | Instances Invidious pour les replis YouTube |
+| `IMAGE_PROVIDERS` | toutes | Sources de `.images` (openverse, commons, bing, pixabay, pexels, unsplash, loremflickr) |
+| `PIXABAY_API_KEY` | vide | Clé facultative Pixabay pour `.images` |
+| `PEXELS_API_KEY` | vide | Clé facultative Pexels pour `.images` |
 | `ALLOW_RESTART` | `false` | Autorise la commande `restart` |
 | `STORAGE_DRIVER` | `auto` | Stockage local ou PostgreSQL |
 | `DATABASE_URL` | vide | URI PostgreSQL injectée par Northflank |
@@ -145,7 +151,7 @@ L’archive HidenCloud privée contient directement dans `bin/` la version night
 
 Lance `.dlstatus` pour exécuter un diagnostic réel du moteur, afficher la version effectivement lancée, la plateforme, la limite, le délai et toute erreur d’exécution. Pour TikTok, le bot essaie d’abord yt-dlp puis utilise automatiquement l’API officielle du lecteur TikTok si l’extracteur est bloqué; les liens complets et courts sont reconnus. Certaines vidéos privées, protégées, payantes, géobloquées ou nécessitant une connexion peuvent rester indisponibles.
 
-`.videos <recherche>` choisit le premier résultat vidéo pertinent et envoie le fichier dans la discussion, pas seulement son URL. `.images <recherche>` utilise Openverse, avec Wikimedia Commons en repli, exclut les recherches explicites et joint le créateur, la licence et le lien source à l’image. Ces deux commandes ne demandent pas de clé API payante.
+`.videos <recherche>` envoie la meilleure vidéo trouvée et propose les autres résultats dans un menu numéroté, pas seulement une URL. `.images <recherche>` interroge plusieurs sources (Openverse, Wikimedia Commons, Bing Images, Pixabay et Pexels avec clé, plus des images thématiques en appoint), note la pertinence de chaque candidat (recouvrement des mots-clés, minimum 40 %), écarte les faux positifs et envoie 3 à 5 photos téléchargées avec leur créateur, leur licence et leur lien source. Aucune commande image n’envoie un lien à la place du média. Ces commandes ne demandent pas de clé API payante.
 
 ### Commande adulte séparée
 

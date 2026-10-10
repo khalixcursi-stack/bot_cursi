@@ -86,6 +86,41 @@ export async function fetchJson(url, options = {}) {
   throw lastError
 }
 
+export async function fetchText(url, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase()
+  const attempts = Math.max(1, options.retries ?? (['GET', 'HEAD'].includes(method) ? 2 : 1))
+  const { retries: _retries, ...fetchOptions } = options
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), options.timeout || 15_000)
+    try {
+      const response = await fetch(url, {
+        ...fetchOptions,
+        headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/xhtml+xml', ...(fetchOptions.headers || {}) },
+        signal: controller.signal
+      })
+      const text = await response.text()
+      if (!response.ok) {
+        const error = new Error(`Service distant : HTTP ${response.status} ${text.slice(0, 160)}`)
+        error.retryable = response.status === 429 || response.status >= 500
+        throw error
+      }
+      return text
+    } catch (error) {
+      lastError = error.name === 'AbortError'
+        ? new Error('Le service distant a dépassé le délai autorisé')
+        : error
+      const retryable = error.name === 'AbortError' || error.retryable || !/HTTP 4\d\d/.test(String(error.message))
+      if (attempt >= attempts || !retryable) throw lastError
+      await new Promise(resolve => setTimeout(resolve, attempt * 350))
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+  throw lastError
+}
+
 function filenameFromResponse(response, finalUrl) {
   const disposition = response.headers.get('content-disposition') || ''
   const utf = disposition.match(/filename\*=UTF-8''([^;]+)/i)

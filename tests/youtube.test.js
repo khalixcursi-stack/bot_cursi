@@ -31,7 +31,11 @@ test('accepte uniquement les URL YouTube dans les commandes YouTube', async () =
   await assert.rejects(() => resolveYouTube(config, 'https://example.com/video'), /uniquement une URL YouTube/)
 })
 
-test('explique la configuration manquante pour une recherche par titre', async () => {
+test('explique la configuration manquante pour une recherche par titre', async t => {
+  // Le repli Invidious tente le réseau : on le simule en échec rapide.
+  const original = globalThis.fetch
+  globalThis.fetch = async () => new Response('unavailable', { status: 503 })
+  t.after(() => { globalThis.fetch = original })
   await assert.rejects(() => resolveYouTube({}, 'un titre'), error => {
     assert.equal(error.userFacing, true)
     assert.match(error.message, /YOUTUBE_API_KEY/)
@@ -42,10 +46,10 @@ test('explique la configuration manquante pour une recherche par titre', async (
 
 test('calcule la disponibilité des téléchargements sans exposer les secrets', () => {
   assert.deepEqual(downloaderReadiness({}), {
-    local: false, cobalt: false, search: false, directYouTube: false, titleYouTube: false, social: false
+    local: false, cobalt: true, search: true, directYouTube: true, titleYouTube: true, social: true
   })
   assert.equal(downloaderReadiness({ cobaltApiUrl: 'https://cobalt.example', youtubeApiKey: 'secret' }).titleYouTube, true)
   assert.equal(downloaderReadiness({ localDownloaderEnabled: true }).titleYouTube, true)
-  assert.equal(youtubeSearchMode({ localDownloaderEnabled: true }), 'moteur local yt-dlp')
-  assert.equal(youtubeSearchMode({ youtubeSearchApiUrl: 'https://inv.example', youtubeSearchProvider: 'invidious' }), 'API Invidious configurée')
+  assert.equal(youtubeSearchMode({ localDownloaderEnabled: true }), 'moteur local yt-dlp + repli Invidious')
+  assert.equal(youtubeSearchMode({ youtubeSearchApiUrl: 'https://inv.example', youtubeSearchProvider: 'invidious' }), 'API Invidious configurée + repli Invidious')
 })

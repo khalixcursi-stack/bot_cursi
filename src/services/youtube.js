@@ -1,6 +1,7 @@
-import { UserError, asUserError } from '../core/errors.js'
+import { UserError } from '../core/errors.js'
 import { fetchJson } from './http.js'
 import { localYouTubeSearch } from './local-downloader.js'
+import { searchYouTubeInvidious } from './more-apis.js'
 
 const YOUTUBE_HOSTS = new Set([
   'youtube.com',
@@ -87,18 +88,20 @@ function searchEndpoint(base, provider, query) {
 }
 
 export function youtubeSearchMode(config) {
-  if (config.youtubeApiKey) return 'YouTube Data API v3'
+  const fallback = ' + repli Invidious'
+  if (config.youtubeApiKey) return `YouTube Data API v3${fallback}`
   if (config.youtubeSearchApiUrl) {
-    return config.youtubeSearchProvider === 'piped' ? 'API Piped configurée' : 'API Invidious configurée'
+    return config.youtubeSearchProvider === 'piped' ? `API Piped configurée${fallback}` : `API Invidious configurée${fallback}`
   }
-  if (config.localDownloaderEnabled) return 'moteur local yt-dlp'
-  return 'non configurée'
+  if (config.localDownloaderEnabled) return `moteur local yt-dlp${fallback}`
+  return `repli Invidious uniquement`
 }
 
 export async function searchYouTube(config, query) {
   const cleanQuery = String(query || '').trim().slice(0, 200)
   if (!cleanQuery) throw new UserError('Indiquez un titre ou une recherche YouTube.')
 
+  let lastError
   try {
     if (config.youtubeApiKey) {
       const params = new URLSearchParams({
@@ -109,25 +112,43 @@ export async function searchYouTube(config, query) {
         q: cleanQuery,
         key: config.youtubeApiKey
       })
-      return parseYouTubeApiResults(await fetchJson(`https://www.googleapis.com/youtube/v3/search?${params}`))
-    }
-
-    if (config.youtubeSearchApiUrl) {
+      const results = parseYouTubeApiResults(await fetchJson(`https://www.googleapis.com/youtube/v3/search?${params}`))
+      if (results.length) return results
+    } else if (config.youtubeSearchApiUrl) {
       const provider = config.youtubeSearchProvider === 'piped' ? 'piped' : 'invidious'
       const data = await fetchJson(searchEndpoint(config.youtubeSearchApiUrl, provider, cleanQuery), { timeout: 20_000 })
-      return provider === 'piped' ? parsePipedResults(data) : parseInvidiousResults(data)
+      const results = provider === 'piped' ? parsePipedResults(data) : parseInvidiousResults(data)
+      if (results.length) return results
+    } else if (config.localDownloaderEnabled) {
+      const results = await localYouTubeSearch(config, cleanQuery)
+      if (results.length) return results
     }
-
-    if (config.localDownloaderEnabled) return await localYouTubeSearch(config, cleanQuery)
   } catch (error) {
-    throw asUserError(error, 'La recherche YouTube a échoué')
+    lastError = error
   }
 
-  throw new UserError([
-    'La recherche par titre est désactivée.',
+  // Repli automatique sur les instances Invidious publiques dès qu’un moteur
+  // échoue ou renvoie une liste vide, sans clé supplémentaire.
+  try {
+    const { results } = await searchYouTubeInvidious(cleanQuery, {
+      instances: config.invidiousInstances,
+      limit: 5
+    })
+    if (results.length) return results
+  } catch (error) {
+    lastError = error
+  }
+
+  const hints = [
+    'La recherche YouTube a échoué sur tous les moteurs (local, API, Invidious).',
     'Activez LOCAL_DOWNLOADER_ENABLED=true ou configurez YOUTUBE_API_KEY/YOUTUBE_SEARCH_API_URL.',
     'Consultez .dlstatus.'
-  ].join(' '))
+  ].join(' ')
+  if (lastError) {
+    const detail = String(lastError.message || lastError).replace(/\s+/g, ' ').trim().slice(0, 200)
+    throw new UserError(`${hints} (${detail})`)
+  }
+  throw new UserError(hints)
 }
 
 export async function resolveYouTube(config, query) {

@@ -17,13 +17,14 @@ advice joke
 bible define github images lyrics npm nsfw videos weather translate exchange
 alldl dlstatus facebook fetchurl gitclone instagram play tiktok twitter ytmp4 yts
 anime husbando kitsune neko waifu stickers
-livre wiki hn stackoverflow crypto
+livre hn stackoverflow
+wiki fact dog quote crypto pokemon country xkcd trivia number nameguess picsum rickmorty
 `.trim().split(/\s+/)
 
-test('le plan d’audit couvre les 115 commandes du registre', async () => {
+test('le plan d’audit couvre les 126 commandes du registre', async () => {
   const registry = await new CommandRegistry({ info() {} }).load(path.resolve('src/commands'))
   const expected = registry.all().map(command => command.name).sort()
   const covered = [...new Set([...SIMULATED, ...LIVE])].sort()
-  assert.equal(expected.length, 115)
+  assert.equal(expected.length, 126)
   assert.deepEqual(covered, expected)
 })
