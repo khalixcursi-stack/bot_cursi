@@ -17,7 +17,7 @@ function fixture() {
     ])
   }
   return {
-    config: { botName: 'ᴄᴜʀsɪㅤ愛', botVersion: '0.17.0', profilePicturePath: '/app/assets/profile.jpg' },
+    config: { botName: 'ᴄᴜʀsɪㅤ愛', botVersion: '0.17.0', profilePicturePath: 'assets/profile.jpg' },
     runtime: { prefix: '.', mode: 'private' },
     registry
   }
@@ -46,11 +46,12 @@ test('un nom ou un numéro ouvre le bon sous-menu sans description', () => {
   assert.match(text, /Retour direct : \*\.menu\*/)
 })
 
-test('la photo et tout le menu sont réunis dans un seul bloc', () => {
+test('la photo et tout le menu sont réunis dans un seul bloc avec un buffer média', async () => {
   const context = fixture()
-  const root = buildMenuImageContent(context)
-  const child = buildMenuImageContent(context, 'Groupe')
-  assert.equal(root.image.url, '/app/assets/profile.jpg')
+  const root = await buildMenuImageContent(context)
+  const child = await buildMenuImageContent(context, 'Groupe')
+  assert.ok(Buffer.isBuffer(root.image))
+  assert.ok(Buffer.isBuffer(child.image))
   assert.match(root.caption, /MENU PRINCIPAL/)
   assert.match(child.caption, /GROUPE/)
   assert.match(child.caption, /\.groupinfo/)

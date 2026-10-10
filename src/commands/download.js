@@ -1,12 +1,20 @@
 import { UserError, asUserError } from '../core/errors.js'
-import { cobaltDownload, downloaderReadiness, invidiousAudioDownload, probeCobaltInstances } from '../services/downloader.js'
+import { cobaltDownload, downloaderReadiness, invidiousAudioDownload, isNoVideoError, probeCobaltInstances } from '../services/downloader.js'
 import { fetchExternalBuffer } from '../services/http.js'
 import { localDownload, localDownloaderDiagnostics, localDownloaderInfo } from '../services/local-downloader.js'
 import { isTikTokLink, tiktokOfficialDownload } from '../services/tiktok.js'
-import { isYouTubeUrl, resolveYouTube, searchYouTube, youtubeSearchMode } from '../services/youtube.js'
+import { isYouTubeUrl, searchYouTube, youtubeSearchMode } from '../services/youtube.js'
 import { formatBytes, truncate } from '../utils/format.js'
+import { decodeMediaUrl } from '../utils/html.js'
 
 async function sendDownload(ctx, file, caption = '', forceAudio = false) {
+  if (Array.isArray(file)) {
+    for (const [index, media] of file.entries()) {
+      await sendDownload(ctx, media, [caption, `📎 ${index + 1}/${file.length}`].filter(Boolean).join('\n'), forceAudio)
+    }
+    return
+  }
+  if (!Buffer.isBuffer(file?.buffer) || !file.buffer.length) throw new UserError('Aucun média valide à envoyer.')
   const mime = file.contentType || 'application/octet-stream'
   if (forceAudio || mime.startsWith('audio/')) {
     return ctx.send({ audio: file.buffer, mimetype: mime.startsWith('audio/') ? mime : 'audio/mpeg', fileName: file.filename })
@@ -16,13 +24,75 @@ async function sendDownload(ctx, file, caption = '', forceAudio = false) {
   return ctx.send({ document: file.buffer, mimetype: mime, fileName: file.filename, caption })
 }
 
+const DIRECT_PAGE_HOSTS = ['instagram.com', 'facebook.com', 'fb.watch', 'pinterest.com', 'pin.it']
+
+function supportsDirectPage(input) {
+  try {
+    const url = new URL(input)
+    return ['http:', 'https:'].includes(url.protocol) && DIRECT_PAGE_HOSTS.some(host =>
+      url.hostname === host || url.hostname.endsWith(`.${host}`)
+    )
+  } catch {
+    return false
+  }
+}
+
+function openGraphMedia(html, pageUrl) {
+  const videos = []
+  const images = []
+  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
+    const attributes = {}
+    for (const match of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)) {
+      attributes[match[1].toLowerCase()] = match[2] ?? match[3] ?? match[4]
+    }
+    const property = String(attributes.property || attributes.name || '').toLowerCase()
+    const kind = /^og:video(?::(?:url|secure_url))?$/.test(property) ? 'video'
+      : /^og:image(?::(?:url|secure_url))?$/.test(property) ? 'image' : ''
+    if (!kind || !attributes.content) continue
+    try {
+      const url = new URL(decodeMediaUrl(attributes.content), pageUrl)
+      if (['http:', 'https:'].includes(url.protocol)) (kind === 'video' ? videos : images).push({ url: url.toString(), kind })
+    } catch {
+      // Une balise mal formée ne bloque pas les suivantes.
+    }
+  }
+  const seen = new Set()
+  return [...videos, ...images].filter(item => !seen.has(item.url) && seen.add(item.url))
+}
+
+// Dernier repli pour les publications publiques photo/vidéo. La page ET les
+// URL des médias sont récupérées par http.js (SSRF, redirections, délai, taille).
+export async function tryDirectImageDownload(config, input, mode = 'auto') {
+  if (mode === 'audio' || !supportsDirectPage(input)) return null
+  const page = await fetchExternalBuffer(input, {
+    maxBytes: 2 * 1024 * 1024, timeout: 20_000, allowedHosts: DIRECT_PAGE_HOSTS,
+    headers: { 'user-agent': 'Mozilla/5.0 (compatible; CURSI-MD)', accept: 'text/html,application/xhtml+xml' }
+  })
+  const candidates = openGraphMedia(page.buffer.toString('utf8'), page.finalUrl)
+  let lastError
+  for (const candidate of candidates) {
+    try {
+      const file = await fetchExternalBuffer(candidate.url, {
+        maxBytes: config.maxDownloadBytes, timeout: 60_000, headers: { referer: page.finalUrl }
+      })
+      if (!file.buffer.length || !file.contentType.startsWith(`${candidate.kind}/`) || file.contentType === 'image/svg+xml') {
+        throw new Error('La balise Open Graph ne contient pas de média exploitable.')
+      }
+      return { ...file, engine: 'open-graph-direct' }
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw asUserError(lastError, 'Aucun média public og:image/og:video trouvé sur cette page')
+}
+
 function ready(value) {
   return value ? '✅ prêt' : '❌ à configurer'
 }
 
 // Chaîne de téléchargement : moteur local → TikTok officiel → instances Cobalt
-// → Invidious (audio YouTube). Chaque échec est journalisé puis le moteur
-// suivant est essayé avant de renvoyer un message d’erreur explicite.
+// → Invidious (audio YouTube) → Open Graph (photos/vidéos sociales).
+// Un post sans vidéo passe immédiatement au repli photo; un échec n'est pas fatal.
 export async function downloadWithFallback(ctx, input, mode, { youtube = false } = {}) {
   const value = String(input || '').trim()
   const isUrl = /^https?:\/\//i.test(value)
@@ -31,22 +101,38 @@ export async function downloadWithFallback(ctx, input, mode, { youtube = false }
   }
 
   const failures = []
+  let directAttempted = false
+  async function directFallback() {
+    if (directAttempted || mode === 'audio' || !supportsDirectPage(value)) return null
+    directAttempted = true
+    try {
+      return await tryDirectImageDownload(ctx.config, value, mode)
+    } catch (error) {
+      failures.push(`Open Graph : ${truncate(error.message || error, 140)}`)
+      ctx.logger?.warn?.({ err: error }, 'Repli direct Open Graph indisponible; poursuite des replis')
+      return null
+    }
+  }
 
   if (ctx.config.localDownloaderEnabled) {
     try {
       return await localDownload(ctx.config, value, mode, { youtubeSearch: youtube && !isUrl, logger: ctx.logger })
     } catch (error) {
       failures.push(`moteur local : ${truncate(error.message || error, 140)}`)
-      ctx.logger.warn({ err: error, mode }, 'Téléchargeur local indisponible; essai des replis')
+      ctx.logger?.warn?.({ err: error, mode }, 'Téléchargeur local indisponible; essai des replis')
+      if (isNoVideoError(error)) {
+        const photo = await directFallback()
+        if (photo) return photo
+      }
     }
   }
 
   if (isUrl && isTikTokLink(value)) {
     try {
-      return await tiktokOfficialDownload(ctx.config, value)
+      return await tiktokOfficialDownload(ctx.config, value, mode)
     } catch (error) {
       failures.push(`TikTok : ${truncate(error.message || error, 140)}`)
-      ctx.logger.warn({ err: error }, 'Repli officiel TikTok indisponible; essai de Cobalt')
+      ctx.logger?.warn?.({ err: error }, 'Repli officiel TikTok indisponible; essai de Cobalt')
     }
   }
 
@@ -68,7 +154,7 @@ export async function downloadWithFallback(ctx, input, mode, { youtube = false }
       return await cobaltDownload(ctx.config, targetUrl, mode === 'video' ? 'auto' : mode)
     } catch (error) {
       failures.push(`cobalt : ${truncate(error.message || error, 140)}`)
-      ctx.logger.warn({ err: error }, 'Repli Cobalt indisponible')
+      ctx.logger?.warn?.({ err: error }, 'Repli Cobalt indisponible')
     }
 
     if (mode === 'audio' && isYouTubeUrl(targetUrl)) {
@@ -76,14 +162,17 @@ export async function downloadWithFallback(ctx, input, mode, { youtube = false }
         return await invidiousAudioDownload(ctx.config, targetUrl, { instances: ctx.config.invidiousInstances })
       } catch (error) {
         failures.push(`invidious : ${truncate(error.message || error, 140)}`)
-        ctx.logger.warn({ err: error }, 'Repli audio Invidious indisponible')
+        ctx.logger?.warn?.({ err: error }, 'Repli audio Invidious indisponible')
       }
     }
   }
 
+  const direct = await directFallback()
+  if (direct) return direct
+
   throw new UserError([
-    'Téléchargement impossible malgré tous les replis (moteur local, TikTok, Cobalt, Invidious).',
-    ...failures.slice(0, 4).map(failure => `• ${failure}`),
+    'Téléchargement impossible malgré tous les replis (moteur local, TikTok, Cobalt, Invidious, Open Graph).',
+    ...failures.slice(0, 5).map(failure => `• ${failure}`),
     'Réessaie dans un instant ou consulte .dlstatus.'
   ].join('\n'))
 }
@@ -91,11 +180,11 @@ export async function downloadWithFallback(ctx, input, mode, { youtube = false }
 function socialCommand(name, aliases, label) {
   return {
     name, aliases, category: 'Téléchargement', usage: '<URL>', cooldown: 12,
-    description: `Télécharge un média ${label} avec le moteur local ou les replis Cobalt/Invidious.`,
+    description: `Télécharge les médias ${label} avec le moteur local ou les replis Cobalt/Open Graph.`,
     async run(ctx) {
       if (!/^https?:\/\//i.test(ctx.text)) throw new UserError('Indiquez une URL HTTP(S) complète.')
       const file = await downloadWithFallback(ctx, ctx.text, 'auto')
-      await sendDownload(ctx, file, `⬇️ ${label} · ${formatBytes(file.buffer.length)}`)
+      await sendDownload(ctx, file, `⬇️ ${label} · ${formatBytes((Array.isArray(file) ? file : [file]).reduce((total, item) => total + item.buffer.length, 0))}`)
     }
   }
 }
@@ -157,6 +246,47 @@ export default [
         'Les téléchargements YouTube bloqués basculent automatiquement vers Cobalt puis Invidious.',
         '_Téléchargez uniquement les contenus que vous avez le droit de conserver._'
       ].join('\n'))
+    }
+  },
+  {
+    name: 'videos', aliases: ['videosearch', 'findvideo'], category: 'Recherche', usage: '<recherche>',
+    description: 'Recherche des vidéos sur Internet : envoie la meilleure et propose les autres résultats numérotés.', cooldown: 20,
+    async run(ctx) {
+      const query = String(ctx.text || '').trim().slice(0, 180)
+      if (!query) throw new UserError(`Indique une recherche, par exemple : ${ctx.runtime.prefix}videos documentaire Congo`)
+      const videos = await searchYouTube(ctx.config, query)
+      if (!videos.length) throw new UserError(`Aucune vidéo trouvée pour « ${query} ».`)
+
+      const top = videos.slice(0, 3)
+      let lastError
+      for (const [index, video] of top.entries()) {
+        try {
+          const downloaded = await downloadWithFallback(ctx, video.url, 'video', { youtube: true })
+          const file = (Array.isArray(downloaded) ? downloaded : [downloaded]).find(item => item.contentType?.startsWith('video/'))
+          if (!file?.buffer?.length) throw new UserError('Le résultat ne contient aucune vidéo exploitable.')
+          const mime = file.contentType
+          const alternatives = top
+            .filter((_, position) => position !== index)
+            .map((item, position) => `${position + 2}. *${truncate(item.title, 120)}*\n   ${item.url}`)
+          await ctx.send({
+            video: file.buffer,
+            mimetype: mime,
+            fileName: file.filename,
+            caption: [
+              `🎬 *${truncate(video.title, 180)}*`,
+              video.author ? `👤 ${video.author}` : '',
+              `🔎 Recherche : ${truncate(query, 120)}`,
+              `🔗 ${video.url}`,
+              alternatives.length ? `\n📺 *Autres résultats :*\n${alternatives.join('\n')}` : ''
+            ].filter(Boolean).join('\n')
+          })
+          return
+        } catch (error) {
+          lastError = error
+          ctx.logger?.warn?.({ err: error, source: video.url }, 'Vidéo de recherche ignorée; essai du résultat suivant')
+        }
+      }
+      throw asUserError(lastError, `Aucune vidéo téléchargeable pour « ${query} »`)
     }
   },
   {

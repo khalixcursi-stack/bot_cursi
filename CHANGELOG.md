@@ -1,5 +1,18 @@
 # Journal des changements
 
+## Correctifs urgents — 2026-10-10
+
+- cinq instances Cobalt publiques exactes en cascade, sans configuration obligatoire et sans troncature de la liste; téléchargement complet des albums picker et poursuite sur « no video »;
+- la clé Cobalt privée n’est plus envoyée aux instances publiques; limites de taille/album et validation des médias conservées;
+- arguments YouTube yt-dlp complétés (clients iOS/Android/TV/Web, agent iOS, référent, options TLS/géo) en téléchargement et recherche, avec rotation anti-bot conservée;
+- repli Open Graph `og:image`/`og:video` pour Instagram/Facebook/Pinterest, immédiatement après un post sans vidéo et en dernier recours;
+- `.videos` intégrée à `download.js` sans doublon : recherche, téléchargement, validation du type vidéo et essai des résultats suivants;
+- TikTok : trois URL CDN distinctes, décodage Unicode/HTML, liens courts protégés, posts photo `image_post_info`/`aweme_type=150`, rejet des buffers ≤ 1 024 octets et envoi de tous les médias;
+- services API et 13 commandes complétés avec des routes/fournisseurs de secours, drapeau pays PNG obligatoire, sprites Pokémon alternatifs, `.btc`/`.eth` ciblées, traduction/paroles en cascade et URL météo construite avec des séparateurs `&`;
+- quatre instances Invidious publiques après tout échec/absence de résultat d’une recherche locale ou configurée;
+- toutes les commandes image utilisent des buffers, y compris `.getpp` et les menus de secours;
+- tests de régression hors réseau ajoutés pour les cascades, albums, commandes, arguments yt-dlp, types MIME et protections SSRF; syntaxe contrôlée avec `node --check`.
+
 ## 0.24.0 — 2026-10-10
 
 - recherche d’images fiabilisée : score de pertinence `relevanceScore` (recouvrement des mots-clés titre/tags, minimum 40 %), faux positifs écartés, résultats triés et candidats multi-sources (Openverse, Wikimedia Commons, Bing Images, Pixabay et Pexels avec clé, Unsplash/LoremFlickr en appoint);

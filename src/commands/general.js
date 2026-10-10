@@ -1,4 +1,5 @@
 import os from 'node:os'
+import fs from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
 import { calculate } from '../utils/math.js'
 import { commandUsage, formatBytes, formatDuration, randomItem } from '../utils/format.js'
@@ -102,9 +103,9 @@ export function buildMenuText(context, selection = '') {
   return category ? buildCategoryMenuText(context, category) : buildMainMenuText(context)
 }
 
-export function buildMenuImageContent(context, selection = '') {
+export async function buildMenuImageContent(context, selection = '') {
   return {
-    image: { url: context.config.profilePicturePath },
+    image: await fs.readFile(context.config.profilePicturePath),
     caption: buildMenuText(context, selection)
   }
 }
@@ -149,7 +150,7 @@ export default [
         })
       } catch (error) {
         ctx.logger.warn({ err: error }, 'Menu interactif indisponible; envoi du bloc image + texte')
-        await ctx.send(buildMenuImageContent(ctx, selection), { quoted: ctx.msg })
+        await ctx.send(await buildMenuImageContent(ctx, selection), { quoted: ctx.msg })
       }
     }
   },

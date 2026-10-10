@@ -28,7 +28,8 @@ const USER_AGENTS = [
 // et d’agent utilisateur avant d’abandonner au profit des replis externes.
 const ANTI_BOT_PATTERN = /sign in to confirm|not a bot|confirm you.?re not a bot|use --cookies|cookies? (?:file|are needed|were)|login required|http error 429|too many requests/i
 
-const YOUTUBE_CLIENT_STRATEGIES = ['ios,web', 'web_embedded,android', 'tv,web_safari']
+const YOUTUBE_USER_AGENT = 'com.google.ios.youtube/19.29.1 (iPhone14,3; U; CPU iOS 17_5_1 like Mac OS X; en_US)'
+const YOUTUBE_CLIENT_STRATEGIES = ['ios,android,tv,web', 'web_embedded,android', 'tv,web_safari']
 
 function pickUserAgent() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
@@ -177,7 +178,7 @@ async function ffmpegAvailable() {
   }
 }
 
-function commonArgs(config, directory, { userAgent, youtubeClients, usesFfmpeg } = {}) {
+function commonArgs(config, directory, { userAgent = YOUTUBE_USER_AGENT, youtubeClients = YOUTUBE_CLIENT_STRATEGIES[0], usesFfmpeg } = {}) {
   const args = [
     '--no-warnings',
     '--no-progress',
@@ -185,6 +186,9 @@ function commonArgs(config, directory, { userAgent, youtubeClients, usesFfmpeg }
     '--socket-timeout', '20',
     '--retries', '3',
     '--fragment-retries', '3',
+    '--referer', 'https://www.youtube.com/',
+    '--no-check-certificates',
+    '--geo-bypass',
     '--max-filesize', String(config.maxDownloadBytes),
     '--paths', directory,
     '--output', 'media.%(ext)s'
@@ -208,7 +212,7 @@ async function localDownloadAttempt(config, binary, source, mode, { youtubeClien
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cursi-download-'))
   try {
     const args = commonArgs(config, directory, {
-      userAgent: pickUserAgent(),
+      userAgent: youtubeClients === YOUTUBE_CLIENT_STRATEGIES[0] ? YOUTUBE_USER_AGENT : pickUserAgent(),
       youtubeClients,
       usesFfmpeg
     })
@@ -300,8 +304,11 @@ export async function localYouTubeSearch(config, query) {
     '--playlist-end', '5',
     '--socket-timeout', '20',
     '--retries', '2',
-    '--user-agent', pickUserAgent(),
-    '--extractor-args', 'youtube:player_client=ios,web',
+    '--user-agent', YOUTUBE_USER_AGENT,
+    '--extractor-args', `youtube:player_client=${YOUTUBE_CLIENT_STRATEGIES[0]}`,
+    '--referer', 'https://www.youtube.com/',
+    '--no-check-certificates',
+    '--geo-bypass',
     '--', `ytsearch5:${value}`
   ], Math.min(config.localDownloadTimeoutMs, 90_000))
 

@@ -16,19 +16,19 @@ export default [
     name: 'weather', aliases: ['meteo', 'climate'], category: 'Recherche', usage: '<ville>',
     description: 'Affiche la météo actuelle avec Open-Meteo.', cooldown: 4,
     async run(ctx) {
-      if (!ctx.text) throw new Error('Indiquez une ville')
+      if (!ctx.text) throw new UserError('Indiquez une ville.')
       const geo = await fetchJson(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(ctx.text)}&count=1&language=fr&format=json`)
       const place = geo.results?.[0]
-      if (!place) throw new Error('Ville introuvable')
-      // Construction par URLSearchParams : garantit `&current=` (et non `¤t=`)
-      // quoi qu’il arrive aux entités HTML dans l’URL.
+      if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) throw new UserError('Ville introuvable.')
+      // URLSearchParams garantit des séparateurs & valides pour chaque paramètre.
       const forecastUrl = new URL('https://api.open-meteo.com/v1/forecast')
       forecastUrl.searchParams.set('latitude', place.latitude)
       forecastUrl.searchParams.set('longitude', place.longitude)
       forecastUrl.searchParams.set('current', 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m')
       forecastUrl.searchParams.set('timezone', 'auto')
       const forecast = await fetchJson(forecastUrl.toString())
-      const current = forecast.current
+      const current = forecast?.current
+      if (!current) throw new UserError('La météo actuelle est momentanément indisponible.')
       await ctx.reply([
         `🌦️ *Météo — ${place.name}, ${place.country || ''}*`,
         `${WEATHER[current.weather_code] || 'Conditions inconnues'}`,
@@ -45,9 +45,9 @@ export default [
       const [target = 'fr', ...rest] = ctx.args
       const quotedText = ctx.quoted ? extractText(ctx.quoted.message) : ''
       const text = rest.join(' ') || quotedText
-      if (!text) throw new Error('Exemple : .translate en Bonjour le monde')
+      if (!text) throw new UserError('Exemple : .translate en Bonjour le monde')
       const { text: translated, provider } = await translateText(text, target)
-      if (!translated) throw new Error('Traduction indisponible')
+      if (!translated) throw new UserError('Traduction indisponible')
       await ctx.reply(`🌍 *Traduction (${target})*\n${translated}\n\n_Service : ${provider}_`)
     }
   },
@@ -88,9 +88,9 @@ export default [
     description: 'Recherche les paroles d’une chanson (lrclib.net puis lyrics.ovh).', cooldown: 5,
     async run(ctx) {
       const [artist, title] = ctx.text.split('|').map(value => value.trim())
-      if (!artist || !title) throw new Error('Format : artiste | titre')
-      const { lyrics, provider } = await fetchLyrics(artist, title)
-      await ctx.reply(`🎵 *${artist} — ${title}*\n\n${truncate(lyrics || 'Paroles introuvables', 3800)}\n\n_Service : ${provider}_`)
+      if (!artist || !title) throw new UserError('Format : artiste | titre')
+      const { lyrics, provider, artist: foundArtist, title: foundTitle } = await fetchLyrics(artist, title)
+      await ctx.reply(`🎵 *${foundArtist} — ${foundTitle}*\n\n${truncate(lyrics || 'Paroles introuvables', 3800)}\n\n_Service : ${provider}_`)
     }
   },
   {

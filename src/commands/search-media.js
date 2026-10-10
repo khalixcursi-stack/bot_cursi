@@ -1,5 +1,4 @@
-import { UserError, asUserError } from '../core/errors.js'
-import { downloadWithFallback } from './download.js'
+import { UserError } from '../core/errors.js'
 import {
   downloadInternetImage,
   safeAdultImageQuery,
@@ -8,7 +7,6 @@ import {
   searchInternetImages
 } from '../services/image-search.js'
 import { sendMultipleImages } from '../services/send-media.js'
-import { searchYouTube } from '../services/youtube.js'
 import { truncate } from '../utils/format.js'
 
 const MIN_PHOTOS = 3
@@ -24,45 +22,6 @@ function imageCaption(result, query) {
 }
 
 export default [
-  {
-    name: 'videos', aliases: ['videosearch', 'findvideo'], category: 'Recherche', usage: '<recherche>',
-    description: 'Recherche des vidéos sur Internet : envoie la meilleure et propose les autres résultats numérotés.', cooldown: 20,
-    async run(ctx) {
-      const query = String(ctx.text || '').trim().slice(0, 180)
-      if (!query) throw new UserError(`Indique une recherche, par exemple : ${ctx.runtime.prefix}videos documentaire Congo`)
-      const videos = await searchYouTube(ctx.config, query)
-      if (!videos.length) throw new UserError(`Aucune vidéo trouvée pour « ${query} ».`)
-
-      const top = videos.slice(0, 3)
-      let lastError
-      for (const [index, video] of top.entries()) {
-        try {
-          const file = await downloadWithFallback(ctx, video.url, 'video', { youtube: true })
-          const mime = file.contentType?.startsWith('video/') ? file.contentType : 'video/mp4'
-          const alternatives = top
-            .filter((_, position) => position !== index)
-            .map((item, position) => `${position + 2}. *${truncate(item.title, 120)}*\n   ${item.url}`)
-          await ctx.send({
-            video: file.buffer,
-            mimetype: mime,
-            fileName: file.filename,
-            caption: [
-              `🎬 *${truncate(video.title, 180)}*`,
-              video.author ? `👤 ${video.author}` : '',
-              `🔎 Recherche : ${truncate(query, 120)}`,
-              `🔗 ${video.url}`,
-              alternatives.length ? `\n📺 *Autres résultats :*\n${alternatives.join('\n')}` : ''
-            ].filter(Boolean).join('\n')
-          })
-          return
-        } catch (error) {
-          lastError = error
-          ctx.logger.warn({ err: error, source: video.url }, 'Vidéo de recherche ignorée; essai du résultat suivant')
-        }
-      }
-      throw asUserError(lastError, `Aucune vidéo téléchargeable pour « ${query} »`)
-    }
-  },
   {
     name: 'images', aliases: ['imgsearch', 'picsearch'], category: 'Recherche', usage: '<recherche>',
     description: `Recherche des photos SFW pertinentes et envoie ${MIN_PHOTOS} à ${TARGET_PHOTOS} images avec leurs sources.`, cooldown: 15,

@@ -37,15 +37,23 @@ function formatCount(value) {
 // Télécharge une image et l’envoie TOUJOURS comme média WhatsApp : jamais de
 // lien texte à la place de la photo. Si le téléchargement échoue, la commande
 // propage une erreur claire (ou un repli texte pour .wiki uniquement).
-async function sendImageBuffer(ctx, url, caption, { maxBytes = 10 * 1024 * 1024 } = {}) {
-  const file = await fetchExternalBuffer(url, {
-    maxBytes: Math.min(ctx.config.maxDownloadBytes, maxBytes),
-    timeout: 45_000
-  })
-  if (!file.contentType.startsWith('image/') || file.contentType === 'image/svg+xml') {
-    throw new UserError('La ressource trouvée n’est pas une image exploitable.')
+async function sendImageBuffer(ctx, urls, caption, { maxBytes = 10 * 1024 * 1024 } = {}) {
+  let lastError
+  for (const url of [...new Set((Array.isArray(urls) ? urls : [urls]).filter(Boolean))]) {
+    try {
+      const file = await fetchExternalBuffer(url, {
+        maxBytes: Math.min(ctx.config.maxDownloadBytes || maxBytes, maxBytes), timeout: 45_000
+      })
+      if (!file.buffer.length || !file.contentType.startsWith('image/') || file.contentType === 'image/svg+xml') {
+        throw new UserError('La ressource trouvée n’est pas une image exploitable.')
+      }
+      return ctx.send({ image: file.buffer, mimetype: file.contentType, caption })
+    } catch (error) {
+      lastError = error
+      ctx.logger?.warn?.({ err: error }, 'Image indisponible; essai du média de repli')
+    }
   }
-  return ctx.send({ image: file.buffer, mimetype: file.contentType, caption })
+  throw asUserError(lastError, 'Aucune image exploitable n’a pu être téléchargée')
 }
 
 const COIN_ALIASES = {
@@ -97,7 +105,7 @@ export default [
 
       if (summary.image) {
         try {
-          await sendImageBuffer(ctx, summary.image, truncate(caption, 1000))
+          await sendImageBuffer(ctx, summary.images?.length ? summary.images : summary.image, truncate(caption, 1000))
           return
         } catch (error) {
           ctx.logger.warn({ err: error }, 'Image Wikipédia indisponible; envoi du résumé en texte')
@@ -119,10 +127,12 @@ export default [
     description: 'Envoie directement une photo de chien aléatoire.', cooldown: 5,
     async run(ctx) {
       let lastError
+      const excludedUrls = []
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          const url = await dogImageUrl()
-          await sendImageBuffer(ctx, url, '🐶 *Photo de chien*\nSource : dog.ceo')
+          const url = await dogImageUrl({ excludedUrls })
+          excludedUrls.push(url)
+          await sendImageBuffer(ctx, url, '🐶 *Photo de chien*')
           return
         } catch (error) {
           lastError = error
@@ -145,7 +155,10 @@ export default [
     description: 'Cours des cryptomonnaies en USD/EUR (défaut : BTC, ETH, SOL, BNB).', cooldown: 5,
     async run(ctx) {
       const requested = String(ctx.text || '').split(/[\s,]+/).map(value => value.trim().toLowerCase()).filter(Boolean)
-      const ids = (requested.length ? requested : ['bitcoin', 'ethereum', 'solana', 'binancecoin'])
+      const prefix = ctx.runtime?.prefix || '.'
+      const invoked = String(ctx.body?.startsWith(prefix) ? ctx.body.slice(prefix.length).split(/\s+/)[0] : ctx.commandName || '').toLowerCase()
+      const defaults = ['btc', 'bitcoin', 'eth'].includes(invoked) ? [COIN_ALIASES[invoked]] : ['bitcoin', 'ethereum', 'solana', 'binancecoin']
+      const ids = (requested.length ? requested : defaults)
         .map(token => COIN_ALIASES[token] || token)
         .slice(0, 8)
       const prices = await cryptoPrice(ids)
@@ -185,7 +198,7 @@ export default [
 
       if (pokemon.image) {
         try {
-          await sendImageBuffer(ctx, pokemon.image, caption)
+          await sendImageBuffer(ctx, pokemon.images?.length ? pokemon.images : pokemon.image, caption)
           return
         } catch (error) {
           ctx.logger.warn({ err: error }, 'Artwork Pokémon indisponible; nouvel essai')
@@ -209,16 +222,8 @@ export default [
         `🗣️ Langue(s) : ${country.languages.join(', ') || 'inconnue(s)'}`
       ].join('\n')
 
-      // Les drapeaux SVG ne sont pas acceptés par WhatsApp : PNG uniquement.
-      if (country.flag && !/\.svg(\?|$)/i.test(country.flag)) {
-        try {
-          await sendImageBuffer(ctx, country.flag, caption)
-          return
-        } catch (error) {
-          ctx.logger.warn({ err: error }, 'Drapeau indisponible; nouvel essai')
-        }
-      }
-      await ctx.reply(caption)
+      // PNG uniquement; le CDN de secours ne remplace jamais le drapeau par un lien.
+      await sendImageBuffer(ctx, country.flagUrls?.length ? country.flagUrls : country.flag, caption)
     }
   },
   {
@@ -330,7 +335,9 @@ export default [
     async run(ctx) {
       const [width, height] = String(ctx.text || '').split(/\s+/).map(value => Number.parseInt(value, 10))
       const url = picsumUrl(width, height)
-      await sendImageBuffer(ctx, url, '📷 *Photo aléatoire*\nSource : Picsum')
+      await sendImageBuffer(ctx, [
+        url, picsumUrl(width, height, `cursi-${Date.now()}`), url.replace('picsum.photos/', 'picsum.photos/id/0/')
+      ], '📷 *Photo*\nSource : Picsum (photo fixe de secours si le service aléatoire échoue)')
     }
   },
   {
@@ -351,7 +358,7 @@ export default [
         await sendImageBuffer(ctx, character.image, caption)
         return
       }
-      await ctx.reply(caption)
+      throw new UserError('La photo de ce personnage Rick & Morty est indisponible.')
     }
   }
 ]

@@ -1,4 +1,5 @@
 import { UserError } from '../core/errors.js'
+import { fetchExternalBuffer } from '../services/http.js'
 import { extractText, isViewOnceMessage } from '../core/message.js'
 import { jidNumber } from '../utils/jid.js'
 import { truncate } from '../utils/format.js'
@@ -11,7 +12,11 @@ export default [
     async run(ctx) {
       const target = ctx.resolveTarget(ctx.text) || ctx.sender
       const url = await ctx.sock.profilePictureUrl(target, 'image')
-      await ctx.send({ image: { url }, caption: `🖼️ Photo de @${jidNumber(target)}`, mentions: [target] })
+      const file = await fetchExternalBuffer(url, { maxBytes: Math.min(ctx.config.maxDownloadBytes || 10 * 1024 * 1024, 10 * 1024 * 1024) })
+      if (!file.buffer.length || !file.contentType.startsWith('image/') || file.contentType === 'image/svg+xml') {
+        throw new UserError('La photo de profil n’est pas une image exploitable.')
+      }
+      await ctx.send({ image: file.buffer, mimetype: file.contentType, caption: `🖼️ Photo de @${jidNumber(target)}`, mentions: [target] })
     }
   },
   {

@@ -133,26 +133,41 @@ function filenameFromResponse(response, finalUrl) {
   }
 }
 
-export async function fetchExternalBuffer(input, { maxBytes = 50 * 1024 * 1024, timeout = 45_000, redirects = 4, headers = {} } = {}) {
+export async function fetchExternalBuffer(input, {
+  maxBytes = 50 * 1024 * 1024, timeout = 45_000, redirects = 4, headers = {}, method = 'GET', allowedHosts = []
+} = {}) {
   let current = String(input)
   for (let hop = 0; hop <= redirects; hop += 1) {
     const safeUrl = await validateExternalUrl(current)
+    if (allowedHosts.length && !allowedHosts.some(host =>
+      safeUrl.hostname.toLowerCase() === host.toLowerCase() || safeUrl.hostname.toLowerCase().endsWith(`.${host.toLowerCase()}`)
+    )) throw new Error('La redirection quitte le domaine autorisé.')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeout)
     let response
     try {
       response = await fetch(safeUrl, {
+        method,
         redirect: 'manual',
         signal: controller.signal,
         headers: { 'user-agent': USER_AGENT, ...headers }
       })
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get('location')
+        await response.body?.cancel()
         if (!location) throw new Error('Redirection sans destination')
         current = new URL(location, safeUrl).toString()
         continue
       }
       if (!response.ok) throw new Error(`Téléchargement impossible : HTTP ${response.status}`)
+      if (String(method).toUpperCase() === 'HEAD') {
+        return {
+          buffer: Buffer.alloc(0),
+          contentType: response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream',
+          filename: filenameFromResponse(response, safeUrl.toString()),
+          finalUrl: safeUrl.toString()
+        }
+      }
       const announced = Number(response.headers.get('content-length') || 0)
       if (announced > maxBytes) throw new Error(`Fichier trop volumineux (${Math.ceil(announced / 1024 / 1024)} Mo)`)
 
