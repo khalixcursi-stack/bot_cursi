@@ -17,6 +17,27 @@ const SUPPORTED_MEDIA_HOSTS = [
 ]
 let installPromise = null
 
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0'
+]
+
+// Signaux d’un blocage anti-bot YouTube : on change alors de client lecteur
+// et d’agent utilisateur avant d’abandonner au profit des replis externes.
+const ANTI_BOT_PATTERN = /sign in to confirm|not a bot|confirm you.?re not a bot|use --cookies|cookies? (?:file|are needed|were)|login required|http error 429|too many requests/i
+
+const YOUTUBE_CLIENT_STRATEGIES = ['ios,web', 'web_embedded,android', 'tv,web_safari']
+
+function pickUserAgent() {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
+}
+
+export function isAntiBotError(error) {
+  return Boolean(error?.antibot) || ANTI_BOT_PATTERN.test(String(error?.message || ''))
+}
+
 function releaseAsset() {
   const key = `${process.platform}-${process.arch}`
   const assets = {
@@ -129,7 +150,11 @@ function runProcess(binary, args, timeout) {
     child.once('close', code => {
       clearTimeout(timer)
       if (code === 0) resolve({ stdout, stderr })
-      else reject(new UserError(`Le moteur local a refusé ce média${processError(stderr) ? ` (${processError(stderr)})` : ''}.`))
+      else {
+        const error = new UserError(`Le moteur local a refusé ce média${processError(stderr) ? ` (${processError(stderr)})` : ''}.`)
+        error.antibot = ANTI_BOT_PATTERN.test(String(stderr))
+        reject(error)
+      }
     })
   })
 }
@@ -142,8 +167,18 @@ function mimeFromExtension(extension) {
   }[extension] || 'application/octet-stream'
 }
 
-function commonArgs(config, directory) {
-  return [
+async function ffmpegAvailable() {
+  if (!ffmpegPath) return false
+  try {
+    await fs.access(ffmpegPath, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function commonArgs(config, directory, { userAgent, youtubeClients, usesFfmpeg } = {}) {
+  const args = [
     '--no-warnings',
     '--no-progress',
     '--no-playlist',
@@ -154,36 +189,45 @@ function commonArgs(config, directory) {
     '--paths', directory,
     '--output', 'media.%(ext)s'
   ]
+  if (userAgent) args.push('--user-agent', userAgent)
+  if (youtubeClients) args.push('--extractor-args', `youtube:player_client=${youtubeClients}`)
+  if (usesFfmpeg && ffmpegPath) args.push('--ffmpeg-location', ffmpegPath)
+  return args
 }
 
-export async function localDownload(config, input, mode = 'auto', { youtubeSearch = false } = {}) {
-  const value = String(input || '').trim()
-  if (!value) throw new UserError('Indiquez un titre ou une URL à télécharger.')
-  const isUrl = /^https?:\/\//i.test(value)
-  if (isUrl) {
-    const safeUrl = await validateExternalUrl(value).catch(error => { throw asUserError(error, 'URL de téléchargement refusée') })
-    const hostname = safeUrl.hostname.toLowerCase()
-    if (!SUPPORTED_MEDIA_HOSTS.some(host => hostname === host || hostname.endsWith(`.${host}`))) {
-      throw new UserError('Ce domaine n’est pas pris en charge par le téléchargeur social sécurisé.')
-    }
-  }
-  if (!isUrl && !youtubeSearch) throw new UserError('Cette commande nécessite une URL HTTP(S) complète.')
-
-  const binary = await ensureLocalDownloader(config)
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cursi-download-'))
-  const source = isUrl ? value : `ytsearch1:${value.slice(0, 180)}`
-  const args = commonArgs(config, directory)
-  if (mode === 'audio') {
-    args.push('-f', 'bestaudio/best', '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '5')
-  } else if (mode === 'video') {
-    args.push('-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best', '--merge-output-format', 'mp4')
-  } else {
-    args.push('-f', 'best[ext=mp4]/best')
-  }
-  if (ffmpegPath) args.push('--ffmpeg-location', ffmpegPath)
-  args.push('--', source)
-
+function isYouTubeSource(input = '') {
   try {
+    const hostname = new URL(input).hostname.toLowerCase()
+    return hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be'
+  } catch {
+    return false
+  }
+}
+
+async function localDownloadAttempt(config, binary, source, mode, { youtubeClients, usesFfmpeg }) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cursi-download-'))
+  try {
+    const args = commonArgs(config, directory, {
+      userAgent: pickUserAgent(),
+      youtubeClients,
+      usesFfmpeg
+    })
+    if (mode === 'audio') {
+      args.push('-f', 'bestaudio/best')
+      if (usesFfmpeg) {
+        args.push('--extract-audio', '--audio-format', 'mp3', '--audio-quality', '5')
+      }
+    } else if (mode === 'video') {
+      if (usesFfmpeg) {
+        args.push('-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best', '--merge-output-format', 'mp4')
+      } else {
+        args.push('-f', 'best[height<=720][ext=mp4]/best[height<=720]/best')
+      }
+    } else {
+      args.push('-f', 'best[ext=mp4]/best')
+    }
+    args.push('--', source)
+
     await runProcess(binary, args, config.localDownloadTimeoutMs)
     const files = (await fs.readdir(directory, { withFileTypes: true }))
       .filter(entry => entry.isFile() && !entry.name.endsWith('.part'))
@@ -201,12 +245,47 @@ export async function localDownload(config, input, mode = 'auto', { youtubeSearc
       buffer,
       filename: selected.name,
       contentType: mimeFromExtension(extension),
-      finalUrl: isUrl ? value : source,
+      finalUrl: source,
       engine: 'yt-dlp-local'
     }
   } finally {
     await fs.rm(directory, { recursive: true, force: true }).catch(() => {})
   }
+}
+
+export async function localDownload(config, input, mode = 'auto', { youtubeSearch = false, logger = null } = {}) {
+  const value = String(input || '').trim()
+  if (!value) throw new UserError('Indiquez un titre ou une URL à télécharger.')
+  const isUrl = /^https?:\/\//i.test(value)
+  if (isUrl) {
+    const safeUrl = await validateExternalUrl(value).catch(error => { throw asUserError(error, 'URL de téléchargement refusée') })
+    const hostname = safeUrl.hostname.toLowerCase()
+    if (!SUPPORTED_MEDIA_HOSTS.some(host => hostname === host || hostname.endsWith(`.${host}`))) {
+      throw new UserError('Ce domaine n’est pas pris en charge par le téléchargeur social sécurisé.')
+    }
+  }
+  if (!isUrl && !youtubeSearch) throw new UserError('Cette commande nécessite une URL HTTP(S) complète.')
+
+  const binary = await ensureLocalDownloader(config)
+  const usesFfmpeg = await ffmpegAvailable()
+  const source = isUrl ? value : `ytsearch1:${value.slice(0, 180)}`
+  const youtubeSource = !isUrl || isYouTubeSource(value)
+
+  // Stratégies successives « player_client » : un blocage anti-bot de YouTube
+  // déclenche automatiquement un nouvel essai avec un autre client lecteur et
+  // un autre agent utilisateur avant d’échouer.
+  const strategies = youtubeSource ? YOUTUBE_CLIENT_STRATEGIES : [null]
+  let lastError
+  for (const youtubeClients of strategies) {
+    try {
+      return await localDownloadAttempt(config, binary, source, mode, { youtubeClients, usesFfmpeg })
+    } catch (error) {
+      lastError = error
+      if (!isAntiBotError(error)) break
+      logger?.warn?.({ err: error, mode, youtubeClients }, 'Blocage anti-bot yt-dlp; nouvel essai avec un autre client lecteur')
+    }
+  }
+  throw lastError
 }
 
 export async function localYouTubeSearch(config, query) {
@@ -221,6 +300,8 @@ export async function localYouTubeSearch(config, query) {
     '--playlist-end', '5',
     '--socket-timeout', '20',
     '--retries', '2',
+    '--user-agent', pickUserAgent(),
+    '--extractor-args', 'youtube:player_client=ios,web',
     '--', `ytsearch5:${value}`
   ], Math.min(config.localDownloadTimeoutMs, 90_000))
 

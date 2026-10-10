@@ -39,10 +39,11 @@ function context(text) {
 test('les commandes de recherche web sont enregistrées avec leurs alias', () => {
   assert.equal(command('livre').name, 'livre')
   assert.equal(command('book').name, 'livre')
-  assert.equal(command('wikipedia').name, 'wiki')
   assert.equal(command('hackernews').name, 'hn')
   assert.equal(command('so').name, 'stackoverflow')
-  assert.equal(command('cours').name, 'crypto')
+  // .wiki et .crypto ont rejoint extra.js (résumé + image, cours multi-crypto).
+  assert.equal(command('wiki'), undefined)
+  assert.equal(command('crypto'), undefined)
 })
 
 test('décode les entités HTML renvoyées par Stack Exchange', () => {
@@ -67,25 +68,6 @@ test('.livre affiche trois livres avec auteur, année et lien Open Library', asy
     assert.match(replies[0], /Frank Herbert · 1965/)
     assert.match(replies[0], /https:\/\/openlibrary\.org\/works\/OL893414W/)
     assert.doesNotMatch(replies[0], /Quatrième/)
-  })
-})
-
-test('.wiki récupère le meilleur article puis son résumé français', async () => {
-  await withFetch([
-    [/fr\.wikipedia\.org\/w\/api\.php/, { query: { search: [{ title: 'Congo (fleuve)', snippet: 'Le <span>Congo</span>' }] } }],
-    [/rest_v1\/page\/summary/, {
-      title: 'Congo (fleuve)',
-      description: 'fleuve d’Afrique centrale',
-      extract: 'Le Congo est un fleuve d’Afrique centrale.',
-      content_urls: { desktop: { page: 'https://fr.wikipedia.org/wiki/Congo_(fleuve)' } }
-    }]
-  ], async calls => {
-    const { ctx, replies } = context('fleuve')
-    await command('wiki').run(ctx)
-    assert.match(calls[1], /rest_v1\/page\/summary\/Congo_\(fleuve\)/)
-    assert.match(replies[0], /\*Congo \(fleuve\)\*/)
-    assert.match(replies[0], /Le Congo est un fleuve/)
-    assert.match(replies[0], /https:\/\/fr\.wikipedia\.org\/wiki\/Congo_\(fleuve\)/)
   })
 })
 
@@ -122,21 +104,6 @@ test('.stackoverflow affiche les questions avec titres décodés', async () => {
     assert.match(replies[0], /reject vs\. throw "now"/)
     assert.match(replies[0], /✅ résolue/)
     assert.match(replies[0], /https:\/\/stackoverflow\.com\/questions\/33445415/)
-  })
-})
-
-test('.crypto affiche le cours en EUR et USD après recherche de l’identifiant', async () => {
-  await withFetch([
-    [/api\.coingecko\.com\/api\/v3\/search/, { coins: [{ id: 'bitcoin', name: 'Bitcoin', symbol: 'btc' }] }],
-    [/simple\/price/, { bitcoin: { usd: 82504, eur: 73634, usd_24h_change: 0.95 } }]
-  ], async calls => {
-    const { ctx, replies } = context('bitcoin')
-    await command('crypto').run(ctx)
-    assert.match(calls[1], /ids=bitcoin/)
-    assert.match(replies[0], /Bitcoin \(BTC\)/)
-    assert.match(replies[0], /EUR/)
-    assert.match(replies[0], /USD/)
-    assert.match(replies[0], /\+0\.95 % \(24 h\)/)
   })
 })
 

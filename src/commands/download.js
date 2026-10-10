@@ -1,10 +1,10 @@
 import { UserError, asUserError } from '../core/errors.js'
-import { cobaltDownload, downloaderReadiness } from '../services/downloader.js'
+import { cobaltDownload, downloaderReadiness, invidiousAudioDownload, probeCobaltInstances } from '../services/downloader.js'
 import { fetchExternalBuffer } from '../services/http.js'
 import { localDownload, localDownloaderDiagnostics, localDownloaderInfo } from '../services/local-downloader.js'
 import { isTikTokLink, tiktokOfficialDownload } from '../services/tiktok.js'
 import { isYouTubeUrl, resolveYouTube, searchYouTube, youtubeSearchMode } from '../services/youtube.js'
-import { formatBytes } from '../utils/format.js'
+import { formatBytes, truncate } from '../utils/format.js'
 
 async function sendDownload(ctx, file, caption = '', forceAudio = false) {
   const mime = file.contentType || 'application/octet-stream'
@@ -20,6 +20,9 @@ function ready(value) {
   return value ? '✅ prêt' : '❌ à configurer'
 }
 
+// Chaîne de téléchargement : moteur local → TikTok officiel → instances Cobalt
+// → Invidious (audio YouTube). Chaque échec est journalisé puis le moteur
+// suivant est essayé avant de renvoyer un message d’erreur explicite.
 export async function downloadWithFallback(ctx, input, mode, { youtube = false } = {}) {
   const value = String(input || '').trim()
   const isUrl = /^https?:\/\//i.test(value)
@@ -27,42 +30,68 @@ export async function downloadWithFallback(ctx, input, mode, { youtube = false }
     throw new UserError('Cette commande accepte uniquement un titre ou une URL YouTube.')
   }
 
-  let localError
+  const failures = []
+
   if (ctx.config.localDownloaderEnabled) {
     try {
-      return await localDownload(ctx.config, value, mode, { youtubeSearch: youtube && !isUrl })
+      return await localDownload(ctx.config, value, mode, { youtubeSearch: youtube && !isUrl, logger: ctx.logger })
     } catch (error) {
-      localError = error
-      ctx.logger.warn({ err: error, mode }, 'Téléchargeur local indisponible; essai du repli Cobalt')
+      failures.push(`moteur local : ${truncate(error.message || error, 140)}`)
+      ctx.logger.warn({ err: error, mode }, 'Téléchargeur local indisponible; essai des replis')
     }
   }
 
-  if (isUrl && mode === 'auto' && isTikTokLink(value)) {
+  if (isUrl && isTikTokLink(value)) {
     try {
       return await tiktokOfficialDownload(ctx.config, value)
     } catch (error) {
-      localError = error
+      failures.push(`TikTok : ${truncate(error.message || error, 140)}`)
       ctx.logger.warn({ err: error }, 'Repli officiel TikTok indisponible; essai de Cobalt')
     }
   }
 
-  if (ctx.config.cobaltApiUrl) {
-    let url = value
-    if (youtube && !isUrl) {
-      // Évite de relancer yt-dlp après son échec : le repli Cobalt utilise uniquement
-      // la clé YouTube ou le fournisseur de recherche explicitement configuré.
-      url = await resolveYouTube({ ...ctx.config, localDownloaderEnabled: false }, value)
+  let targetUrl = value
+  if (youtube && !isUrl) {
+    // Les replis suivants ont besoin d’une URL : la recherche YouTube embarque
+    // son propre repli Invidious lorsque le moteur local est indisponible.
+    try {
+      const [video] = await searchYouTube(ctx.config, value)
+      if (video?.url) targetUrl = video.url
+      else failures.push('recherche YouTube : aucun résultat')
+    } catch (error) {
+      failures.push(`recherche YouTube : ${truncate(error.message || error, 140)}`)
     }
-    return cobaltDownload(ctx.config, url, mode === 'video' ? 'auto' : mode)
   }
-  if (localError) throw localError
-  return cobaltDownload(ctx.config, value, mode)
+
+  if (/^https?:\/\//i.test(targetUrl)) {
+    try {
+      return await cobaltDownload(ctx.config, targetUrl, mode === 'video' ? 'auto' : mode)
+    } catch (error) {
+      failures.push(`cobalt : ${truncate(error.message || error, 140)}`)
+      ctx.logger.warn({ err: error }, 'Repli Cobalt indisponible')
+    }
+
+    if (mode === 'audio' && isYouTubeUrl(targetUrl)) {
+      try {
+        return await invidiousAudioDownload(ctx.config, targetUrl, { instances: ctx.config.invidiousInstances })
+      } catch (error) {
+        failures.push(`invidious : ${truncate(error.message || error, 140)}`)
+        ctx.logger.warn({ err: error }, 'Repli audio Invidious indisponible')
+      }
+    }
+  }
+
+  throw new UserError([
+    'Téléchargement impossible malgré tous les replis (moteur local, TikTok, Cobalt, Invidious).',
+    ...failures.slice(0, 4).map(failure => `• ${failure}`),
+    'Réessaie dans un instant ou consulte .dlstatus.'
+  ].join('\n'))
 }
 
 function socialCommand(name, aliases, label) {
   return {
     name, aliases, category: 'Téléchargement', usage: '<URL>', cooldown: 12,
-    description: `Télécharge un média ${label} avec le moteur local ou Cobalt en repli.`,
+    description: `Télécharge un média ${label} avec le moteur local ou les replis Cobalt/Invidious.`,
     async run(ctx) {
       if (!/^https?:\/\//i.test(ctx.text)) throw new UserError('Indiquez une URL HTTP(S) complète.')
       const file = await downloadWithFallback(ctx, ctx.text, 'auto')
@@ -79,7 +108,7 @@ export default [
   socialCommand('twitter', ['x', 'tw', 'xdl'], 'X/Twitter'),
   {
     name: 'dlstatus', aliases: ['downloadstatus', 'dlconfig'], category: 'Téléchargement',
-    description: 'Vérifie la configuration des téléchargements sans afficher les secrets.', cooldown: 3,
+    description: 'Vérifie tous les moteurs de téléchargement et leur disponibilité réelle.', cooldown: 3,
     async run(ctx) {
       const state = downloaderReadiness(ctx.config)
       const local = localDownloaderInfo(ctx.config)
@@ -93,35 +122,46 @@ export default [
         }
       }
       const localReady = state.local && Boolean(diagnostics)
+      const probes = await probeCobaltInstances(ctx.config).catch(() => [])
+      const cobaltOk = probes.filter(probe => probe.status !== 'down')
+      const probeLines = probes.slice(0, 8).map(probe => {
+        const icon = probe.status === 'ok' ? '✅' : probe.status === 'reachable' ? '⚠️' : '❌'
+        return `  ${icon} ${probe.hostname} — ${probe.detail}`
+      })
+      const functional = localReady || cobaltOk.length > 0
+
       await ctx.reply([
         '⬇️ *État des téléchargements*',
         `Moteur local ${local.version} : ${ready(localReady)}`,
         `Version exécutée : ${diagnostics?.reportedVersion || 'indisponible'}`,
         `Plateforme : ${local.platform}`,
-        `Cobalt (repli facultatif) : ${state.cobalt ? '✅ configuré' : '➖ non configuré'}${ctx.config.cobaltApiKey ? ' · clé API présente' : ''}`,
+        `Cobalt : ${probes.length} instance(s) testée(s), ${cobaltOk.length} utilisable(s)${ctx.config.cobaltApiKey ? ' · clé API présente' : ''}`,
+        ...probeLines,
         `Recherche YouTube : ${youtubeSearchMode(ctx.config)}`,
-        `YouTube par URL : ${ready(localReady || state.cobalt)}`,
-        `YouTube par titre (.play/.ytmp4) : ${ready(localReady || (state.cobalt && state.search))}`,
-        `Réseaux sociaux : ${ready(localReady || state.cobalt)}`,
+        `YouTube par URL : ${ready(localReady || cobaltOk.length > 0)}`,
+        `YouTube par titre (.play/.ytmp4) : ${ready(localReady || cobaltOk.length > 0 || state.search)}`,
+        `Réseaux sociaux : ${ready(localReady || cobaltOk.length > 0)}`,
         diagnosticError ? `Erreur locale : ${diagnosticError}` : '',
         `Limite par fichier : ${formatBytes(ctx.config.maxDownloadBytes)}`,
         `Délai maximal : ${Math.round(ctx.config.localDownloadTimeoutMs / 1000)} s`,
         '',
+        `*Téléchargements fonctionnels : ${functional ? '✅ OUI' : '❌ NON'}*`,
         localReady
           ? 'Le moteur vérifié est exécutable; aucune clé n’est nécessaire.'
           : state.local
             ? 'Le moteur est activé mais son diagnostic a échoué; vérifiez la ligne Erreur locale ci-dessus.'
-            : 'Activez LOCAL_DOWNLOADER_ENABLED=true ou configurez une instance Cobalt autorisée.',
-        state.cobalt
-          ? 'Cobalt sera essayé si le moteur local échoue.'
-          : 'COBALT_API_URL reste facultatif lorsque le moteur local est actif.',
+            : 'Activez LOCAL_DOWNLOADER_ENABLED=true pour le moteur local sans clé.',
+        cobaltOk.length
+          ? 'Les instances Cobalt répondent et servent de repli automatique.'
+          : 'Aucune instance Cobalt ne répond actuellement; ajoutez-en via COBALT_INSTANCES.',
+        'Les téléchargements YouTube bloqués basculent automatiquement vers Cobalt puis Invidious.',
         '_Téléchargez uniquement les contenus que vous avez le droit de conserver._'
       ].join('\n'))
     }
   },
   {
     name: 'yts', aliases: ['ytsearch'], category: 'Recherche', usage: '<recherche>',
-    description: 'Recherche des vidéos YouTube via le fournisseur configuré.', cooldown: 6,
+    description: 'Recherche des vidéos YouTube via le fournisseur configuré (repli Invidious).', cooldown: 6,
     async run(ctx) {
       if (!ctx.text) throw new UserError('Indiquez une recherche YouTube.')
       const videos = await searchYouTube(ctx.config, ctx.text)
@@ -135,7 +175,7 @@ export default [
   },
   {
     name: 'play', aliases: ['ytmp3', 'mp3'], category: 'Téléchargement', usage: '<titre ou URL YouTube>',
-    description: 'Trouve un titre puis télécharge son audio avec le moteur local, sans clé obligatoire.', cooldown: 15,
+    description: 'Télécharge l’audio d’un titre YouTube (yt-dlp puis Cobalt puis Invidious).', cooldown: 15,
     async run(ctx) {
       if (!ctx.text) throw new UserError('Indiquez un titre ou une URL YouTube.')
       const file = await downloadWithFallback(ctx, ctx.text, 'audio', { youtube: true })
@@ -144,7 +184,7 @@ export default [
   },
   {
     name: 'ytmp4', aliases: ['ytvideo'], category: 'Téléchargement', usage: '<titre ou URL YouTube>',
-    description: 'Trouve un titre puis télécharge sa vidéo avec le moteur local, sans clé obligatoire.', cooldown: 15,
+    description: 'Télécharge la vidéo d’un titre YouTube (yt-dlp puis Cobalt puis Invidious).', cooldown: 15,
     async run(ctx) {
       if (!ctx.text) throw new UserError('Indiquez un titre ou une URL YouTube.')
       const file = await downloadWithFallback(ctx, ctx.text, 'video', { youtube: true })
