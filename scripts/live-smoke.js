@@ -6,6 +6,7 @@ import downloads from '../src/commands/download.js'
 import anime from '../src/commands/anime.js'
 import stickers from '../src/commands/stickers.js'
 import searchMedia from '../src/commands/search-media.js'
+import searchWeb from '../src/commands/search-web.js'
 import { config } from '../src/config.js'
 
 const results = []
@@ -136,6 +137,17 @@ await probe('Recherche en ligne', 'stickers', async () => {
   if (!sticker?.length) throw new Error('aucun sticker reçu')
   return `${sticker.length} octets`
 })
+
+for (const [name, text] of [['livre', 'Dune'], ['wiki', 'Congo (fleuve)'], ['hn', 'rust language'], ['so', 'javascript promise'], ['crypto', 'bitcoin']]) {
+  await probe('Recherche en ligne', name, async () => {
+    const { ctx, outputs } = textContext(text)
+    ctx.runtime = { prefix: '.' }
+    await searchWeb.find(command => command.name === name || command.aliases.includes(name)).run(ctx)
+    const output = outputs[0]?.text
+    if (!output) throw new Error('aucune réponse textuelle')
+    return `${output.length} caractères`
+  })
+}
 
 const ok = results.filter(result => result.status === 'OK').length
 const report = [

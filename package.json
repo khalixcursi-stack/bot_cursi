@@ -1,6 +1,6 @@
 {
   "name": "nova-md",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Bot WhatsApp multi-appareils, modulaire et sécurisé",
   "type": "module",
   "main": "index.js",

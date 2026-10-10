@@ -6,14 +6,14 @@ Bot WhatsApp multi-appareils écrit en **Node.js 20+** avec **Baileys**. Le proj
 
 ## Fonctionnalités
 
-La version actuelle charge **110 commandes** réparties en modules :
+La version actuelle charge **115 commandes** réparties en modules :
 
 - **Général** : menu, aide, ping, état, uptime, informations, propriétaire, sondages;
 - **Groupes** : `.automod`, anti-lien facultatif, bannissement persistant `.ban`, `.unban` et `.banlist`, retrait collectif confirmé `.kickall`, bienvenue/départ, ouverture/fermeture, lien, révocation, mentions, promotion, exclusion, demandes d’adhésion et messages éphémères;
 - **Médias** : MP3, découpage et photos de profil;
 - **Stickers** : conversion image/vidéo, sticker vers image et recherche `.stickers <nom>`;
 - **Anime** : `.anime <titre>` cherche trois affiches correspondantes; `.waifu`, `.neko`, `.kitsune` et `.husbando` cherchent trois images SFW sur Internet;
-- **Recherche** : météo, traduction, GitHub, npm, paroles, définition, Bible, devises, YouTube, `.videos <recherche>`, `.images <recherche>` SFW et commande adulte séparée `.nsfw 18+ <recherche>` lorsqu’elle est activée;
+- **Recherche** : météo, traduction, GitHub, npm, paroles, définition, Bible, devises, livres Open Library (`.livre`), Wikipédia FR (`.wiki`), Hacker News (`.hn`), Stack Overflow (`.stackoverflow`), cours crypto (`.crypto`), YouTube, `.videos <recherche>`, `.images <recherche>` SFW et commande adulte séparée `.nsfw 18+ <recherche>` lorsqu’elle est activée;
 - **Téléchargements** : `.play <titre>`, YouTube et réseaux sociaux avec un moteur local yt-dlp sans clé, Cobalt facultatif en repli, diagnostic `.dlstatus`, dépôt GitHub et URL directe protégée;
 - **IA** : texte, vision et génération d’image via une API compatible OpenAI facultative;
 - **WhatsApp** : profil, bio, confidentialité, blocage, suppression, `.save` et filtre automatique `.delword` par groupe;

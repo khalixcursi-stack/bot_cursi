@@ -27,7 +27,7 @@ const dataDir = path.resolve(root, process.env.DATA_DIR?.trim() || 'data')
 
 export const config = Object.freeze({
   botName: process.env.BOT_NAME?.trim() || 'ᴄᴜʀsɪㅤ愛',
-  botVersion: '0.22.0',
+  botVersion: '0.23.0',
   ownerName: process.env.OWNER_NAME?.trim() || 'ᴄᴜʀsɪㅤ愛',
   ownerNumber,
   pairingNumber,

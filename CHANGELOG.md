@@ -1,5 +1,16 @@
 # Journal des changements
 
+## 0.23.0 — 2026-10-10
+
+- nouvelles commandes de recherche inspirées de free-apis et public-apis, sans clé API:
+  - `.livre <titre ou auteur>` (alias `.book`) : trois livres via Open Library;
+  - `.wiki <sujet>` (alias `.wikipedia`) : résumé de l’article français le plus pertinent;
+  - `.hn <recherche>` (alias `.hackernews`) : articles Hacker News avec points et commentaires;
+  - `.stackoverflow <question>` (alias `.so`, `.stack`) : questions Stack Overflow résolues ou non;
+  - `.crypto <crypto>` (alias `.cours`) : cours en EUR et USD avec variation sur 24 h via CoinGecko;
+- tests automatisés dédiés (réponses API simulées) et cas ajoutés au test en direct;
+- 115 commandes disponibles.
+
 ## 0.22.0 — 2026-08-19
 
 - nouvelle commande privée propriétaire `.pair` pour générer un code de connexion depuis un numéro WhatsApp de contrôle déjà actif;
